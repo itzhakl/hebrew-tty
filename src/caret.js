@@ -215,7 +215,11 @@
   var SHIFT_CACHE_MAX = 400;
   var currentShift = 0;
 
-  function computeShift(text, cols) {
+  /* The base direction must come from the same resolution the caret uses.
+   * Resolving it independently re-opens the ambiguity, and the row then
+   * flips left the moment a Latin character makes a Hebrew-first line look
+   * Latin-first - which is the alignment flicker seen while typing. */
+  function computeShift(text, cols, rowKey) {
     if (!text || text.length > MAX_LINE) return 0;
     if (!RTL.test(text) || LAYOUT.test(text)) return 0;
 
@@ -228,20 +232,20 @@
 
     var sp = spanOf(text);
     if (sp.e < sp.a) return 0;
-    var rec = recover(text.slice(sp.a, sp.e + 1));
+    var rec = recover(text.slice(sp.a, sp.e + 1), rowKey);
     if (!rec || !baseIsRtl(rec.levels)) return 0;
     return shift;
   }
 
-  function rowShift(line, cols) {
+  function rowShift(line, cols, rowKey) {
     currentShift = 0;
     try {
       if (!line) return 0;
       var text = line.translateToString(true);
-      var key = cols + ' ' + text;
+      var key = rowKey + '|' + cols + '|' + text;
       var hit = shiftCache[key];
       if (hit === undefined) {
-        hit = computeShift(text, cols);
+        hit = computeShift(text, cols, rowKey);
         shiftCache[key] = hit;
         shiftCacheKeys.push(key);
         if (shiftCacheKeys.length > SHIFT_CACHE_MAX) {
@@ -271,7 +275,7 @@
       var line = buf.getLine(buf.baseY + buf.cursorY);
       if (!line) return 0;
       var text = line.translateToString(true);
-      return computeShift(text, term.cols);
+      return computeShift(text, term.cols, buf.cursorY);
     } catch (err) {
       return 0;
     }
@@ -284,8 +288,8 @@
     var shift = caretShiftFor(term);
     return shift ? mapped + shift : mapped;
   };
-  target.__rtlShift = function (line, cols) {
-    return target.__rtlAlign ? rowShift(line, cols) : 0;
+  target.__rtlShift = function (line, cols, rowKey) {
+    return target.__rtlAlign ? rowShift(line, cols, rowKey) : 0;
   };
   target.__rtlSrc = sourceColumn;
   if (typeof module !== 'undefined' && module.exports) {

@@ -113,7 +113,7 @@ function applyTo(file, { align = false } = {}) {
       const [, joined, row, x, term, bg, line, cell] = r;
       const shifted =
         `${joined}=this._characterJoinerService.getJoinedCharacters(${row}),` +
-        `globalThis.__rtlShift(${line},${term}.cols),` +
+        `globalThis.__rtlShift(${line},${term}.cols,${row}-${term}.buffer.ydisp),` +
         `${x}=0;${x}<${term}.cols;${x}++){` +
         `if(${bg}=this._cellColorResolver.result.bg,` +
         `${line}.loadCell(globalThis.__rtlSrc(${x},${term}.cols),${cell})`;

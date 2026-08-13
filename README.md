@@ -96,6 +96,11 @@ sudo rtl-caret install --align
 Rows whose base direction is Hebrew are flushed to the right edge; rows that
 start in Latin script are left alone, so the decision is automatic and per row.
 
+The direction comes from the same resolution the caret uses, sharing one memo
+per row. Deciding it separately re-opens the ambiguity described above, and the
+row then swings left the moment a Latin character makes a Hebrew-first line look
+Latin-first - the alignment flickering back and forth while you type.
+
 The shift is applied to the *source* column each cell is read from, not the
 destination, so every column is still written exactly once and no stale cells
 are left behind. Rows containing box drawing or block characters are skipped,
@@ -142,7 +147,9 @@ painted lines: every logical offset must land on its own glyph
   pass  typed trailing sp     "שלום,  "
 
 typing samples: 68, recovery failures 0, caret failures 0
-all checks pass  (229 checks)
+edit sequence: 9 steps, 0 failures
+alignment stays put: 29 steps, 0 flips
+all checks pass  (273 checks)
 ```
 
 ## Re-recording the fixtures

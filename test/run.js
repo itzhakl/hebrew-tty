@@ -176,5 +176,26 @@ for (const [name, row, shouldShift] of alignCases) {
 }
 console.log(`  cases ${alignCases.length}`);
 
+console.log('\nalignment stays put: a Latin word must not flip a Hebrew line left');
+{
+  // Replayed in order, exactly as typed, so the per-row memo is exercised.
+  const seq = typing.filter(s => s.typed.startsWith('שלום'));
+  const ROW = 24;
+  let flips = 0;
+  let firstRtlSeen = false;
+  for (const { typed, row, caret } of seq) {
+    M.mapCaret(term(row, ROW), caret);           // resolve the row like typing does
+    const shift = M.computeShift(row, COLS, ROW);
+    checks++;
+    if (shift > 0) {
+      firstRtlSeen = true;
+    } else if (firstRtlSeen) {
+      flips++;
+      fail(`alignment flipped left at ${JSON.stringify(typed)}`);
+    }
+  }
+  console.log(`  steps ${seq.length}, flips ${flips}`);
+}
+
 console.log(`\n${failures ? `${failures} FAILURES` : 'all checks pass'}  (${checks} checks)`);
 process.exit(failures ? 1 : 0);
