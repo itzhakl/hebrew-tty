@@ -1,0 +1,26 @@
+[
+ {
+  "name": "short hebrew",
+  "row": "❯  םלוע םולש"
+ },
+ {
+  "name": "hebrew + comma",
+  "row": "❯  .עמשנ המ ,םולש"
+ },
+ {
+  "name": "hebrew + path",
+  "row": "❯  42 הרוש src/auth.ts ץבוק"
+ },
+ {
+  "name": "wrapped tail",
+  "row": "   .עצמאב English הלימ םגו 123"
+ },
+ {
+  "name": "latin base",
+  "row": "❯ hello םולש world"
+ },
+ {
+  "name": "typed trailing sp",
+  "row": "❯   ,םולש"
+ }
+]

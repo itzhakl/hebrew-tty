@@ -1,0 +1,37 @@
+{
+  "name": "rtl-caret",
+  "version": "0.1.0",
+  "description": "Put the VS Code / VSCodium terminal caret on the glyph it is actually editing in Hebrew and other RTL text",
+  "bin": {
+    "rtl-caret": "bin/rtl-caret.js"
+  },
+  "main": "src/patch.js",
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test/run.js"
+  },
+  "dependencies": {
+    "bidi-js": "^1.0.3"
+  },
+  "keywords": [
+    "rtl",
+    "bidi",
+    "hebrew",
+    "arabic",
+    "terminal",
+    "xterm",
+    "vscode",
+    "vscodium",
+    "cursor",
+    "caret"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}
