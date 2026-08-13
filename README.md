@@ -87,6 +87,71 @@ PATH — common with nvm and fnm. Give it the full path:
 sudo "$(command -v node)" "$(npm root -g)/rtl-caret/bin/rtl-caret.js" install
 ```
 
+## The terminal font
+
+The caret fix is column arithmetic, so it is only as correct as the cell grid it
+maps onto. A terminal font that has no Hebrew glyphs sends every Hebrew
+character to a fallback font, and the usual fallbacks (Rubik, Noto Sans Hebrew,
+Segoe UI) are proportional: each glyph is painted at its own natural width
+instead of one cell. The row then drifts out of the grid, and a caret placed on
+the correct *column* still lands between glyphs.
+
+What is needed is a monospace font that covers `U+0590..U+05FF` at exactly the
+same advance width as the Latin glyphs. `tools/graft_hebrew.py` builds one, by
+grafting the Hebrew block of a donor font onto the monospace font you already
+use. The donor outlines are scaled so their alef matches the base's x-height and
+re-centred inside the base's fixed advance, so the cell grid is untouched:
+
+```sh
+python3 -m venv .venv && .venv/bin/pip install fonttools
+.venv/bin/python tools/graft_hebrew.py \
+  CascadiaMonoNF-Regular.ttf NotoSansHebrew-Regular.ttf \
+  CascadiaHebrew-Regular.ttf "Cascadia Hebrew" Regular
+```
+
+The base must be a TrueType (`.ttf`) build - the script rewrites `glyf`
+outlines, which a CFF `.otf` does not have.
+
+Build every style the terminal can ask for. A missing face is the same problem
+as a missing font: an italic run finds no italic in the grafted family, falls
+back to a proportional one, and the narrow letters - `י`, `ו`, `ן` - visibly
+stop lining up while the upright text around them is fine. Where there is no
+italic base to graft onto, `tools/style_alias.py` re-labels an upright face as
+the italic one. Hebrew has no italic form, so the outlines are re-used unchanged
+and only the style bits and names differ:
+
+```sh
+.venv/bin/python tools/style_alias.py \
+  CascadiaHebrew-Regular.ttf CascadiaHebrew-Italic.ttf "Cascadia Hebrew" Italic
+.venv/bin/python tools/style_alias.py \
+  CascadiaHebrew-Bold.ttf CascadiaHebrew-BoldItalic.ttf "Cascadia Hebrew" "Bold Italic" bold
+```
+
+Install all four into `~/.local/share/fonts/` (`fc-cache -f`), then put the
+grafted family in the terminal font list, *before* the generic fallback:
+
+```jsonc
+"terminal.integrated.fontFamily": "'Cascadia Mono NF', 'Cascadia Hebrew', monospace"
+```
+
+Naming the family in that list is what makes it take effect. Without it,
+fontconfig picks the fallback by coverage and the grafted font is never
+consulted, no matter that it is installed.
+
+To check that a face is grid-correct, every glyph should report one width, and
+`fc-match` should return the grafted family for each style rather than a
+fallback:
+
+```sh
+python3 -c "from fontTools.ttLib import TTFont; f=TTFont('CascadiaHebrew-Italic.ttf'); \
+  c=f.getBestCmap(); print({f['hmtx'][c[x]][0] for x in c})"
+fc-match "Cascadia Hebrew:italic:lang=he"
+```
+
+None of this reorders anything - the bidi reordering is Claude Code's, and the
+caret mapping is this patch's. The font's only job is to keep one character in
+one cell so both of those stay true on screen.
+
 ## Right-aligning RTL rows (opt in)
 
 ```sh

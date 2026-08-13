@@ -18,3 +18,17 @@ what the renderer actually produced rather than hand-written guesses.
 
 Each run starts a real Claude Code session and dismisses the trust prompt. No
 message is ever submitted.
+
+## `graft_hebrew.py`
+
+Not part of the harness. It builds the monospace Hebrew font the caret fix needs
+in order to land on a glyph rather than between two - see "The terminal font" in
+the top-level README.
+
+    .venv/bin/pip install fonttools
+    .venv/bin/python tools/graft_hebrew.py BASE.ttf DONOR.ttf OUT.ttf FAMILY SUBFAMILY [height-ratio]
+
+`style_alias.py` fills in a style that has no base to graft onto - typically the
+italic faces - by re-labelling an upright one:
+
+    .venv/bin/python tools/style_alias.py SRC.ttf OUT.ttf FAMILY SUBFAMILY [bold]

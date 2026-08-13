@@ -9,6 +9,8 @@
   "files": [
     "bin",
     "src",
+    "tools/graft_hebrew.py",
+    "tools/style_alias.py",
     "README.md",
     "LICENSE"
   ],
