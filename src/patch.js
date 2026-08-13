@@ -14,6 +14,7 @@ const ROW_ANCHOR =
   /(\w+)=this\._characterJoinerService\.getJoinedCharacters\((\w+)\),(\w+)=0;\3<(\w+)\.cols;\3\+\+\)\{if\((\w+)=this\._cellColorResolver\.result\.bg,(\w+)\.loadCell\(\3,(\w+)\)/;
 
 const ALIGN_FLAG = 'globalThis.__rtlAlign=true;';
+const MIRROR_FLAG = 'globalThis.__rtlMirrorGlyphs=true;';
 
 // Where each editor keeps the WebGL renderer addon.
 const APP_ROOTS = [
@@ -60,7 +61,7 @@ function stateOf(file) {
 
 /* bidi-js ships UMD. Shadow module/exports/define so the CommonJS branch is
  * taken deterministically rather than registering with the host's AMD loader. */
-function buildPayload({ align = false } = {}) {
+function buildPayload({ align = false, mirror = false } = {}) {
   const bidi = fs.readFileSync(require.resolve('bidi-js/dist/bidi.min.js'), 'utf8');
   const caret = fs.readFileSync(path.join(__dirname, 'caret.js'), 'utf8');
   return [
@@ -71,6 +72,7 @@ function buildPayload({ align = false } = {}) {
     '})();',
     caret,
     align ? ALIGN_FLAG : '',
+    mirror ? MIRROR_FLAG : '',
     '}',
     ''
   ].join('\n');
@@ -84,7 +86,7 @@ function writeAtomic(file, text) {
   fs.renameSync(tmp, file);
 }
 
-function applyTo(file, { align = false } = {}) {
+function applyTo(file, { align = false, mirror = true } = {}) {
   let state = stateOf(file);
   if (state === 'missing') return { file, ok: false, note: 'missing' };
 
@@ -104,21 +106,23 @@ function applyTo(file, { align = false } = {}) {
   let src = fs.readFileSync(file, 'utf8');
   let note = 'caret';
 
-  if (align) {
+  if (align || mirror) {
     const r = ROW_ANCHOR.exec(src);
     if (!r) {
-      note = 'caret (row anchor not found, alignment skipped)';
+      note = 'caret (row anchor not found, mirroring and alignment skipped)';
       align = false;
+      mirror = false;
     } else {
       const [, joined, row, x, term, bg, line, cell] = r;
-      const shifted =
+      const rewritten =
         `${joined}=this._characterJoinerService.getJoinedCharacters(${row}),` +
-        `globalThis.__rtlShift(${line},${term}.cols,${row}-${term}.buffer.ydisp),` +
+        `globalThis.__rtlRow(${line},${term}.cols,${row}-${term}.buffer.ydisp),` +
         `${x}=0;${x}<${term}.cols;${x}++){` +
         `if(${bg}=this._cellColorResolver.result.bg,` +
-        `${line}.loadCell(globalThis.__rtlSrc(${x},${term}.cols),${cell})`;
-      src = src.slice(0, r.index) + shifted + src.slice(r.index + r[0].length);
-      note = 'caret + alignment';
+        `${line}.loadCell(globalThis.__rtlSrc(${x},${term}.cols),${cell}),` +
+        `globalThis.__rtlMirror(globalThis.__rtlSrc(${x},${term}.cols),${cell})`;
+      src = src.slice(0, r.index) + rewritten + src.slice(r.index + r[0].length);
+      note = ['caret', mirror && 'mirroring', align && 'alignment'].filter(Boolean).join(' + ');
     }
   }
 
@@ -127,7 +131,8 @@ function applyTo(file, { align = false } = {}) {
     `${m[1]}=globalThis.__rtlCaret(this._terminal,` +
     `Math.min(this._terminal.buffer.active.cursorX,${m[2]}.cols-1))`;
   const patched =
-    buildPayload({ align }) + src.slice(0, m.index) + call + src.slice(m.index + m[0].length);
+    buildPayload({ align, mirror }) +
+    src.slice(0, m.index) + call + src.slice(m.index + m[0].length);
   writeAtomic(file, patched);
   return { file, ok: true, note };
 }
@@ -140,6 +145,6 @@ function revertFile(file) {
 }
 
 module.exports = {
-  MARKER, ANCHOR, ROW_ANCHOR, ALIGN_FLAG,
+  MARKER, ANCHOR, ROW_ANCHOR, ALIGN_FLAG, MIRROR_FLAG,
   discover, stateOf, applyTo, revertFile, buildPayload, backupOf
 };

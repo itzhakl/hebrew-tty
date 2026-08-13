@@ -11,16 +11,18 @@ const USAGE = `rtl-caret - put the terminal caret on the glyph it is editing in 
   sudo rtl-caret uninstall      restore the backups
 
   --align        also flush rows that start in Hebrew to the right edge
+  --no-mirror    do not apply bidi mirroring to brackets in RTL runs
   --app <path>   extra application root to search, repeatable
 
 Editor bundles are replaced by upgrades, so re-run install afterwards.
 `;
 
 function parse(argv) {
-  const opts = { cmd: null, apps: [], align: false };
+  const opts = { cmd: null, apps: [], align: false, mirror: true };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--app') opts.apps.push(argv[++i]);
     else if (argv[i] === '--align') opts.align = true;
+    else if (argv[i] === '--no-mirror') opts.mirror = false;
     else if (!opts.cmd) opts.cmd = argv[i];
   }
   return opts;
@@ -34,7 +36,7 @@ function needRoot() {
 }
 
 function main() {
-  const { cmd, apps, align } = parse(process.argv.slice(2));
+  const { cmd, apps, align, mirror } = parse(process.argv.slice(2));
   if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
     process.stdout.write(USAGE);
     return 0;
@@ -52,10 +54,12 @@ function main() {
       const fs = require('fs');
       const hasBackup = fs.existsSync(patch.backupOf(file));
       const state = patch.stateOf(file);
-      const aligned =
-        state === 'patched' && fs.readFileSync(file, 'utf8').includes(patch.ALIGN_FLAG);
+      const src = state === 'patched' ? fs.readFileSync(file, 'utf8') : '';
+      const on = ['caret'];
+      if (src.includes(patch.MIRROR_FLAG)) on.push('mirror');
+      if (src.includes(patch.ALIGN_FLAG)) on.push('align');
       console.log(
-        `${state.padEnd(12)} ${aligned ? 'caret+align' : 'caret      '} ` +
+        `${state.padEnd(12)} ${(state === 'patched' ? on.join('+') : '').padEnd(19)} ` +
         `${hasBackup ? 'backup' : 'no backup'}  ${file}`
       );
     }
@@ -66,7 +70,7 @@ function main() {
     needRoot();
     let failed = 0;
     for (const file of targets) {
-      const r = patch.applyTo(file, { align });
+      const r = patch.applyTo(file, { align, mirror });
       if (!r.ok) failed++;
       console.log(`${r.ok ? 'ok  ' : 'skip'}  ${r.note}  ${file}`);
     }

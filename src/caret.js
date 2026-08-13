@@ -32,15 +32,18 @@
     return typeof globalThis !== 'undefined' ? globalThis.__rtlBidi : null;
   }
 
+  /* Reordering only, without bidi rule L4: the characters move but brackets
+   * keep their shape. That is how Claude paints - it never applies L4 - so a
+   * line containing brackets is only recognisable when reordered the same way.
+   * bidi-js does apply L4 in getReorderedString, hence the manual permute. */
   function reorderOf(text) {
     var b = engine();
     if (!b) return null;
     var levels = b.getEmbeddingLevels(text, 'auto');
-    return {
-      order: b.getReorderedIndices(text, levels, 0, text.length - 1),
-      painted: b.getReorderedString(text, levels, 0, text.length - 1),
-      levels: levels
-    };
+    var order = b.getReorderedIndices(text, levels, 0, text.length - 1);
+    var out = new Array(order.length);
+    for (var i = 0; i < order.length; i++) out[i] = text[order[i]];
+    return { order: order, painted: out.join(''), levels: levels };
   }
 
   /* Every logical text whose bidi reordering is exactly `painted`.
@@ -269,6 +272,128 @@
     return x < currentShift ? cols - 1 : x - currentShift;
   }
 
+  /* ---- bidi rule L4: mirrored glyphs ----------------------------------- */
+
+  /* A mirrorable character resolved to an odd level is drawn as its mirror:
+   * "(א)" reads as ")א(" once the run is laid out right to left. Claude
+   * reorders the line but never applies L4, so every bracket in a Hebrew run
+   * paints the wrong way round. The map is keyed by painted column and carries
+   * the character expected in that cell, so a map computed for another line
+   * cannot rewrite a cell it does not describe. */
+  var MIRRORABLE = /[()\[\]{}<>«»‹›]/;
+
+  var CODEPOINT_MASK = 0x1fffff;
+  var COMBINED_MASK = 0x800000;
+
+  function mirrorOf(ch) {
+    var b = engine();
+    if (!b || !b.getMirroredCharacter) return null;
+    return b.getMirroredCharacter(ch);
+  }
+
+  function sameMirrors(a, b) {
+    var k;
+    for (k in a) if (!b[k] || b[k][1] !== a[k][1]) return false;
+    for (k in b) if (!a[k]) return false;
+    return true;
+  }
+
+  /* Only mirror when every logical text that repaints as this segment agrees.
+   * Where they disagree the level is genuinely ambiguous from the paint alone,
+   * and leaving the glyph as it is beats flipping it the wrong way. */
+  function mirrorsOf(text, offset, out) {
+    var found = candidates(text);
+    if (!found.length) return;
+    var first = null;
+    for (var c = 0; c < found.length; c++) {
+      var rec = found[c];
+      var one = Object.create(null);
+      for (var i = 0; i < rec.text.length; i++) {
+        if (!(rec.levels.levels[i] & 1)) continue;
+        var m = mirrorOf(rec.text[i]);
+        if (!m) continue;
+        var v = rec.order.indexOf(i);
+        if (v < 0) continue;
+        one[offset + v] = [rec.text.charCodeAt(i), m.charCodeAt(0)];
+      }
+      if (first === null) first = one;
+      else if (!sameMirrors(first, one)) return;
+    }
+    for (var k in first) out[k] = first[k];
+  }
+
+  /* Frames and separators split a row into cells that were each reordered on
+   * their own, so a table row is not the reordering of any single string. */
+  function rowMirrors(text) {
+    if (!text || text.length > MAX_LINE) return null;
+    if (!RTL.test(text) || !MIRRORABLE.test(text)) return null;
+
+    var out = Object.create(null);
+    var any = false;
+    // The prompt glyph is painted outside the reordered span and is itself
+    // mirrorable, so it must not be resolved as part of the line.
+    var start = spanOf(text).a;
+    for (var i = start; i <= text.length; i++) {
+      if (i < text.length && !LAYOUT.test(text[i])) continue;
+      var a = start, e = i - 1;
+      while (a <= e && WS.test(text[a])) a++;
+      while (e >= a && WS.test(text[e])) e--;
+      start = i + 1;
+      if (e < a) continue;
+      var seg = text.slice(a, e + 1);
+      if (!RTL.test(seg) || !MIRRORABLE.test(seg)) continue;
+      mirrorsOf(seg, a, out);
+      any = true;
+    }
+    if (!any) return null;
+    for (var k in out) return out;
+    return null;
+  }
+
+  var mirrorCache = Object.create(null);
+  var mirrorCacheKeys = [];
+  var currentMirrors = null;
+
+  function rowMirrorCached(text) {
+    var hit = mirrorCache[text];
+    if (hit === undefined) {
+      hit = rowMirrors(text);
+      mirrorCache[text] = hit;
+      mirrorCacheKeys.push(text);
+      if (mirrorCacheKeys.length > SHIFT_CACHE_MAX) {
+        delete mirrorCache[mirrorCacheKeys.shift()];
+      }
+    }
+    return hit;
+  }
+
+  function mirrorCell(x, cell) {
+    try {
+      var pair = currentMirrors && currentMirrors[x];
+      if (!pair) return;
+      var content = cell.content;
+      if (content & COMBINED_MASK) return;
+      if ((content & CODEPOINT_MASK) !== pair[0]) return;
+      cell.content = (content & ~(CODEPOINT_MASK | COMBINED_MASK)) | pair[1];
+    } catch (err) {
+      /* leave the cell alone */
+    }
+  }
+
+  /* Row prologue: everything the per-column loop below needs, resolved once. */
+  function rowSetup(line, cols, rowKey) {
+    currentShift = 0;
+    currentMirrors = null;
+    try {
+      if (!line) return 0;
+      var text = line.translateToString(true);
+      if (target.__rtlMirrorGlyphs) currentMirrors = rowMirrorCached(text);
+      return target.__rtlAlign ? rowShift(line, cols, rowKey) : 0;
+    } catch (err) {
+      return 0;
+    }
+  }
+
   function caretShiftFor(term) {
     try {
       var buf = term.buffer.active;
@@ -288,9 +413,8 @@
     var shift = caretShiftFor(term);
     return shift ? mapped + shift : mapped;
   };
-  target.__rtlShift = function (line, cols, rowKey) {
-    return target.__rtlAlign ? rowShift(line, cols, rowKey) : 0;
-  };
+  target.__rtlRow = rowSetup;
+  target.__rtlMirror = mirrorCell;
   target.__rtlSrc = sourceColumn;
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
@@ -300,7 +424,10 @@
       candidates: candidates,
       computeShift: computeShift,
       sourceColumn: sourceColumn,
-      setShift: function (n) { currentShift = n; }
+      setShift: function (n) { currentShift = n; },
+      rowMirrors: rowMirrors,
+      mirrorCell: mirrorCell,
+      setMirrors: function (m) { currentMirrors = m; }
     };
   }
 })();

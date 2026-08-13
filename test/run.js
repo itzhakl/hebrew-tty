@@ -197,5 +197,66 @@ console.log('\nalignment stays put: a Latin word must not flip a Hebrew line lef
   console.log(`  steps ${seq.length}, flips ${flips}`);
 }
 
+/* Mirroring: bidi rule L4 says a mirrorable character at an odd level is drawn
+ * as its mirror. Claude paints the reordering without it, so bidi-js's own
+ * getReorderedString - which does apply L4 - is the reference to match. */
+console.log('\nmirroring: brackets in an RTL run must be drawn mirrored');
+{
+  const bidi = globalThis.__rtlBidi;
+  const paint = (s, mirrored) => {
+    const levels = bidi.getEmbeddingLevels(s, 'auto');
+    if (mirrored) return bidi.getReorderedString(s, levels, 0, s.length - 1);
+    return bidi.getReorderedIndices(s, levels, 0, s.length - 1).map(i => s[i]).join('');
+  };
+  const draw = row => {
+    const map = M.rowMirrors(row);
+    if (!map) return row;
+    M.setMirrors(map);
+    const out = row.split('');
+    for (const x of Object.keys(map)) {
+      const cell = { content: (1 << 22) | out[x].charCodeAt(0) };
+      M.mirrorCell(Number(x), cell);
+      out[x] = String.fromCharCode(cell.content & 0x1fffff);
+    }
+    M.setMirrors(null);
+    return out.join('');
+  };
+
+  const lines = [
+    'הכתבה בפרצים (צאנק, הפסקה, צאנק)',
+    'הדבקה של 15 שורות [Pasted text #1 +14 lines] (פלייסהולדר)',
+    'העברתי את 12 הפריימים דרך הקוד (tools/replay.js): מיפוי',
+    'ראה [docs](https://x.dev) ואז שלום',
+    'שלום עולם',
+    'const x = foo(bar);'
+  ];
+  for (const logical of lines) {
+    checks++;
+    const got = draw(paint(logical, false));
+    const want = paint(logical, true);
+    if (got !== want) fail(`mirroring ${JSON.stringify(logical)} -> ${JSON.stringify(got)}`);
+  }
+
+  // A table row is several independently reordered cells, so each cell has to
+  // be resolved on its own or none of them resolves at all.
+  checks++;
+  const cells = ['(בדיקה) מקרה', 'טקסט [Pasted text] כאן'];
+  const row = `│  ${paint(cells[0], false)}  │  ${paint(cells[1], false)}  │`;
+  const wantRow = `│  ${paint(cells[0], true)}  │  ${paint(cells[1], true)}  │`;
+  if (draw(row) !== wantRow) fail(`mirroring table row -> ${JSON.stringify(draw(row))}`);
+
+  // The prompt glyph is mirrorable and is painted outside the reordered span.
+  checks++;
+  const prompt = `❯  ${paint('שלום (בדיקה)', false)}`;
+  if (draw(prompt)[0] !== '❯') fail('mirroring flipped the prompt glyph');
+
+  // Nothing without Hebrew may be touched, whatever brackets it holds.
+  for (const line of ['const x = foo(bar);', '  if (a[0] < b[1]) {']) {
+    checks++;
+    if (draw(line) !== line) fail(`mirroring changed a latin line: ${line}`);
+  }
+  console.log(`  cases ${lines.length + 5}`);
+}
+
 console.log(`\n${failures ? `${failures} FAILURES` : 'all checks pass'}  (${checks} checks)`);
 process.exit(failures ? 1 : 0);

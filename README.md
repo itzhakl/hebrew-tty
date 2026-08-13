@@ -53,6 +53,41 @@ Two things make that recovery correct in practice:
 
 Lines with no RTL character are never touched.
 
+## Mirrored brackets
+
+Claude reorders each line but stops there. Bidi rule L4 asks for one more
+step: a mirrorable character that resolved to an odd level — `(`, `[`, `{`,
+`<` and their partners — is drawn as its mirror. Without it, brackets in a
+Hebrew run come out the wrong way round:
+
+```
+    uppercase stands for Hebrew, so it reads right to left
+
+    logical   ABC (DEF)
+    painted   )FED( CBA      the brackets kept the shape they had
+    correct   (FED) CBA      L4 draws each of them as its mirror
+```
+
+Written out in Hebrew this is `(צ'אנק, הפסקה)` coming back with its
+parentheses swapped end for end. The same happens to the square brackets
+around `[Pasted text #1 +14 lines]` and to any path in parentheses inside a
+Hebrew sentence.
+
+The renderer patch fixes this per cell: the row is resolved exactly as the
+caret resolves it, the odd-level mirrorable characters are mapped to the
+columns they were painted in, and those cells are drawn mirrored. A cell is
+only rewritten when it still holds the character the resolution expected
+there, so a stale row cannot flip an unrelated glyph. Where more than one
+logical text explains the row and they disagree about a bracket, the glyph is
+left alone.
+
+Table rows are resolved cell by cell — the frame characters split the row,
+because each cell was reordered on its own and the row as a whole is the
+reordering of nothing.
+
+This is on by default. `sudo rtl-caret install --no-mirror` leaves brackets
+as Claude painted them.
+
 ## Install
 
 ```sh
@@ -67,7 +102,8 @@ rtl-caret status       # what is installed, changes nothing
 sudo rtl-caret uninstall
 ```
 
-`status` reports `caret` or `caret+align` for each patched file.
+`status` reports which parts are live for each patched file, for example
+`caret+mirror+align`.
 
 `install` backs up each file it touches to `<file>.rtlbak` before the first
 change, is safe to run repeatedly, and refuses to touch a bundle whose shape it
