@@ -33,7 +33,15 @@ function term(line, cursorY = 24) {
   };
 }
 
-console.log('painted lines: every logical offset must land on its own glyph');
+/* The caret follows the character just typed, so for a caret at logical offset
+ * i the neighbouring character is i-1. A line cursor draws on the left edge of
+ * its cell, so that neighbour occupies the caret's own cell when it is RTL and
+ * the cell to the left when it is LTR. */
+function neighbourGlyph(row, cell, rtl) {
+  return rtl ? row[cell] : row[cell - 1];
+}
+
+console.log('painted lines: the caret must sit against the character it follows');
 for (const { name, row } of painted) {
   const { a, e } = M.spanOf(row);
   const rec = M.recover(row.slice(a, e + 1));
@@ -43,12 +51,14 @@ for (const { name, row } of painted) {
     continue;
   }
   let bad = 0;
-  for (let i = 0; i < rec.text.length; i++) {
+  for (let i = 1; i < rec.text.length; i++) {
     checks++;
     const v = M.mapCaret(term(row), a + i);
-    if (row[v] !== rec.text[i]) {
+    const rtl = (rec.levels.levels[i - 1] & 1) === 1;
+    const got = neighbourGlyph(row, v, rtl);
+    if (got !== rec.text[i - 1]) {
       bad++;
-      fail(`${name} i=${i} want ${JSON.stringify(rec.text[i])} got ${JSON.stringify(row[v])}`);
+      fail(`${name} i=${i} want ${JSON.stringify(rec.text[i - 1])} got ${JSON.stringify(got)}`);
     }
   }
   console.log(`  ${bad ? 'FAIL' : 'pass'}  ${name}  ${JSON.stringify(rec.text)}`);
@@ -78,16 +88,46 @@ for (const { typed, row, caret } of typing) {
     fail(`typed ${JSON.stringify(typed)} recovered ${JSON.stringify(got)}`);
     continue;
   }
+  // After typing, the caret must be adjacent to the last character typed, on
+  // whichever side is "forward" for that character's direction.
   const i = typed.length - 1;
-  if (typed[i] === ' ') continue; // a trailing space has no painted cell to land on
+  if (typed[i] === ' ') continue; // a trailing space has no painted cell
   checks++;
-  const v = M.mapCaret(term(row), a + i);
-  if (row[v] !== typed[i]) {
+  const u = a + rec.order.indexOf(i);
+  const rtl = (rec.levels.levels[i] & 1) === 1;
+  const want = rtl ? u : u + 1;
+  const v = M.mapCaret(term(row), caret);
+  if (v !== want) {
     caretBad++;
-    fail(`typed ${JSON.stringify(typed)} caret ${a + i} -> ${v} (${JSON.stringify(row[v])})`);
+    fail(`typed ${JSON.stringify(typed)} caret ${caret} -> ${v}, expected ${want}`);
   }
 }
 console.log(`  samples ${typing.length}, recovery failures ${recBad}, caret failures ${caretBad}`);
+
+const editSeq = require('./fixtures/edit-sequence.json');
+
+console.log('\nedit sequence: caret stays against the text through deletes and arrows');
+let editBad = 0;
+for (const { action, row, caret } of editSeq) {
+  const { a, e } = M.spanOf(row);
+  const rec = M.recover(row.slice(a, e + 1), 24);
+  checks++;
+  if (!rec) {
+    editBad++;
+    fail(`${action}: no logical text recovered`);
+    continue;
+  }
+  const d = caret - a;
+  if (d <= 0 || d > rec.text.length) continue;
+  const v = M.mapCaret(term(row), caret);
+  const rtl = (rec.levels.levels[d - 1] & 1) === 1;
+  const got = neighbourGlyph(row, v, rtl);
+  if (got !== rec.text[d - 1]) {
+    editBad++;
+    fail(`${action}: caret ${caret} -> ${v}, next to ${JSON.stringify(got)} not ${JSON.stringify(rec.text[d - 1])}`);
+  }
+}
+console.log(`  steps ${editSeq.length}, failures ${editBad}`);
 
 console.log(`\n${failures ? `${failures} FAILURES` : 'all checks pass'}  (${checks} checks)`);
 process.exit(failures ? 1 : 0);

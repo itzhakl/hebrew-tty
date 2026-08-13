@@ -127,6 +127,15 @@
     return found[0];
   }
 
+  function isRtlAt(levels, i) {
+    try {
+      var arr = levels && levels.levels;
+      return !!arr && (arr[i] & 1) === 1;
+    } catch (e) {
+      return false;
+    }
+  }
+
   function baseIsRtl(levels) {
     try {
       var p = levels.paragraphs && levels.paragraphs[0];
@@ -163,17 +172,30 @@
       var d = c - a;
 
       if (d >= n) {
-        // Past the last painted glyph: a trailing space the renderer trimmed.
-        // Step on from the logical end in the paragraph direction.
-        var lastVisual = rec.order.indexOf(n - 1);
+        // Past the last painted glyph, because the renderer trimmed a trailing
+        // cell. Anchor against the last real character, then keep stepping in
+        // the paragraph direction for anything beyond it.
+        var last = n - 1;
+        var lastVisual = rec.order.indexOf(last);
         if (lastVisual < 0) return c;
+        var anchor = lastVisual + (isRtlAt(rec.levels, last) ? 0 : 1);
         var step = baseIsRtl(rec.levels) ? -1 : 1;
-        var pos = lastVisual + step * (d - n + 1);
+        var pos = anchor + step * (d - n);
         return a + (pos < 0 ? 0 : pos);
       }
 
-      var v = rec.order.indexOf(d);
-      return v < 0 ? c : a + v;
+      // A caret sits between characters and a line cursor draws on the left
+      // edge of a cell, so the cell depends on the direction either side of the
+      // gap. At a boundary those disagree; follow the character just typed,
+      // which is the one before the caret. This is the usual strong-caret rule
+      // and it is what makes "שלום h" put the caret after the h rather than at
+      // the far left where the paragraph-level trailing cell sits.
+      var j = d > 0 ? d - 1 : d;
+      var v = rec.order.indexOf(j);
+      if (v < 0) return c;
+      var rtl = isRtlAt(rec.levels, j);
+      if (d === 0) return a + v + (rtl ? 1 : 0);
+      return a + v + (rtl ? 0 : 1);
     } catch (err) {
       return c;
     }

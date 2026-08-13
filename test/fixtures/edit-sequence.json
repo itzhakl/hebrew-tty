@@ -1,0 +1,47 @@
+[
+ {
+  "action": "type שלום",
+  "row": "❯  םולש",
+  "caret": 6
+ },
+ {
+  "action": "type  ",
+  "row": "❯   םולש",
+  "caret": 7
+ },
+ {
+  "action": "key '\\x7f'",
+  "row": "❯  םולש",
+  "caret": 6
+ },
+ {
+  "action": "key '\\x7f'",
+  "row": "❯  ולש",
+  "caret": 5
+ },
+ {
+  "action": "type  עולם",
+  "row": "❯  םלוע ולש",
+  "caret": 10
+ },
+ {
+  "action": "key '\\x7f'",
+  "row": "❯  לוע ולש",
+  "caret": 9
+ },
+ {
+  "action": "key '\\x1b[D'",
+  "row": "❯ לוע ולש",
+  "caret": 8
+ },
+ {
+  "action": "key '\\x1b[D'",
+  "row": "❯ לוע ולש",
+  "caret": 7
+ },
+ {
+  "action": "key '\\x7f'",
+  "row": "❯ לו ולש",
+  "caret": 6
+ }
+]
