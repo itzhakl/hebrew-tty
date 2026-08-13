@@ -2,8 +2,24 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const MARKER = '/*rtl-caret*/';
+
+/* An editor keeps running the payload it was patched with, so "patched" alone
+ * says nothing about which version is live. The stamp identifies the injected
+ * code, and status compares it against this checkout. */
+const STAMP = /\/\*rtl-caret:([0-9a-f]{12})\*\//;
+
+function stampFor({ align = false, mirror = false } = {}) {
+  const caret = fs.readFileSync(path.join(__dirname, 'caret.js'));
+  return crypto
+    .createHash('sha256')
+    .update(caret)
+    .update(`|align=${align}|mirror=${mirror}`)
+    .digest('hex')
+    .slice(0, 12);
+}
 
 // <var>=Math.min(this._terminal.buffer.active.cursorX,<term>.cols-1)
 const ANCHOR = /(\w+)=Math\.min\(this\._terminal\.buffer\.active\.cursorX,(\w+)\.cols-1\)/;
@@ -59,13 +75,29 @@ function stateOf(file) {
   return 'no-anchor';
 }
 
+/* Which payload is in the file, and whether it is the one this checkout
+ * builds. An editor upgrade or an older install both show up here. */
+function versionOf(file) {
+  if (stateOf(file) !== 'patched') return null;
+  const src = fs.readFileSync(file, 'utf8');
+  const m = STAMP.exec(src);
+  const align = src.includes(ALIGN_FLAG);
+  const mirror = src.includes(MIRROR_FLAG);
+  return {
+    align,
+    mirror,
+    stamp: m ? m[1] : null,
+    current: !!m && m[1] === stampFor({ align, mirror })
+  };
+}
+
 /* bidi-js ships UMD. Shadow module/exports/define so the CommonJS branch is
  * taken deterministically rather than registering with the host's AMD loader. */
 function buildPayload({ align = false, mirror = false } = {}) {
   const bidi = fs.readFileSync(require.resolve('bidi-js/dist/bidi.min.js'), 'utf8');
   const caret = fs.readFileSync(path.join(__dirname, 'caret.js'), 'utf8');
   return [
-    `${MARKER}if(!globalThis.__rtlCaret){`,
+    `${MARKER}/*rtl-caret:${stampFor({ align, mirror })}*/if(!globalThis.__rtlCaret){`,
     '(function(){var module={exports:{}},exports=module.exports,define=void 0;',
     bidi,
     'try{globalThis.__rtlBidi=module.exports();}catch(e){}',
@@ -145,6 +177,6 @@ function revertFile(file) {
 }
 
 module.exports = {
-  MARKER, ANCHOR, ROW_ANCHOR, ALIGN_FLAG, MIRROR_FLAG,
-  discover, stateOf, applyTo, revertFile, buildPayload, backupOf
+  MARKER, ANCHOR, ROW_ANCHOR, ALIGN_FLAG, MIRROR_FLAG, STAMP,
+  discover, stateOf, versionOf, stampFor, applyTo, revertFile, buildPayload, backupOf
 };

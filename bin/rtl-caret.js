@@ -54,12 +54,16 @@ function main() {
       const fs = require('fs');
       const hasBackup = fs.existsSync(patch.backupOf(file));
       const state = patch.stateOf(file);
-      const src = state === 'patched' ? fs.readFileSync(file, 'utf8') : '';
-      const on = ['caret'];
-      if (src.includes(patch.MIRROR_FLAG)) on.push('mirror');
-      if (src.includes(patch.ALIGN_FLAG)) on.push('align');
+      const v = patch.versionOf(file);
+      let parts = '';
+      if (v) {
+        const on = ['caret'];
+        if (v.mirror) on.push('mirror');
+        if (v.align) on.push('align');
+        parts = `${on.join('+')}${v.current ? '' : ' (stale, re-run install)'}`;
+      }
       console.log(
-        `${state.padEnd(12)} ${(state === 'patched' ? on.join('+') : '').padEnd(19)} ` +
+        `${state.padEnd(12)} ${parts.padEnd(34)} ` +
         `${hasBackup ? 'backup' : 'no backup'}  ${file}`
       );
     }
