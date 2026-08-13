@@ -129,5 +129,52 @@ for (const { action, row, caret } of editSeq) {
 }
 console.log(`  steps ${editSeq.length}, failures ${editBad}`);
 
+console.log('\nalignment: only plain RTL rows shift, and every column stays covered');
+const COLS = 100;
+const alignCases = [
+  ['hebrew input row', '❯  םלוע םולש', true],
+  ['hebrew with path', '❯  42 הרוש src/auth.ts ץבוק', true],
+  ['latin base row', '❯ hello םולש world', false],
+  ['no hebrew at all', '❯  npm run build', false],
+  ['box drawing frame', '│  םולש                    │', false],
+  ['separator rule', '─'.repeat(60), false]
+];
+for (const [name, row, shouldShift] of alignCases) {
+  checks++;
+  const shift = M.computeShift(row, COLS);
+  if (shouldShift ? !(shift > 0) : shift !== 0) {
+    fail(`alignment ${name}: shift ${shift}, expected ${shouldShift ? '> 0' : '0'}`);
+    continue;
+  }
+  if (!shift) continue;
+
+  // Shifting must land the last glyph on the final column.
+  let end = row.length - 1;
+  while (end >= 0 && /\s/.test(row[end])) end--;
+  checks++;
+  if (end + shift !== COLS - 1) {
+    fail(`alignment ${name}: last glyph lands at ${end + shift}, not ${COLS - 1}`);
+  }
+
+  // Every destination column must read a source column, and the columns that
+  // fall off the left must read from the blank tail rather than out of range.
+  M.setShift(shift);
+  const sources = new Set();
+  let bad = 0;
+  for (let x = 0; x < COLS; x++) {
+    const src = M.sourceColumn(x, COLS);
+    if (src < 0 || src >= COLS) bad++;
+    if (x >= shift) sources.add(src);
+  }
+  M.setShift(0);
+  checks++;
+  if (bad) fail(`alignment ${name}: ${bad} source columns out of range`);
+  checks++;
+  if (sources.size !== COLS - shift) {
+    fail(`alignment ${name}: ${sources.size} distinct sources, expected ${COLS - shift}`);
+  }
+}
+console.log(`  cases ${alignCases.length}`);
+
 console.log(`\n${failures ? `${failures} FAILURES` : 'all checks pass'}  (${checks} checks)`);
 process.exit(failures ? 1 : 0);

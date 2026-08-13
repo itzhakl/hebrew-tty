@@ -201,11 +201,102 @@
     }
   }
 
+  /* ---- optional: flush RTL rows to the right edge ---------------------- */
+
+  // Box drawing, block elements and braille. Claude paints frames, separators
+  // and progress glyphs with these; shifting a row that contains any of them
+  // would tear the surrounding layout apart.
+  // Box drawing and block elements only. The prompt glyph U+276F sits just
+  // outside this range and must not be mistaken for a frame.
+  var LAYOUT = /[─-▟⠀-⣿]/;
+
+  var shiftCache = Object.create(null);
+  var shiftCacheKeys = [];
+  var SHIFT_CACHE_MAX = 400;
+  var currentShift = 0;
+
+  function computeShift(text, cols) {
+    if (!text || text.length > MAX_LINE) return 0;
+    if (!RTL.test(text) || LAYOUT.test(text)) return 0;
+
+    var end = text.length - 1;
+    while (end >= 0 && WS.test(text[end])) end--;
+    if (end < 0) return 0;
+
+    var shift = cols - 1 - end;
+    if (shift <= 0) return 0;
+
+    var sp = spanOf(text);
+    if (sp.e < sp.a) return 0;
+    var rec = recover(text.slice(sp.a, sp.e + 1));
+    if (!rec || !baseIsRtl(rec.levels)) return 0;
+    return shift;
+  }
+
+  function rowShift(line, cols) {
+    currentShift = 0;
+    try {
+      if (!line) return 0;
+      var text = line.translateToString(true);
+      var key = cols + ' ' + text;
+      var hit = shiftCache[key];
+      if (hit === undefined) {
+        hit = computeShift(text, cols);
+        shiftCache[key] = hit;
+        shiftCacheKeys.push(key);
+        if (shiftCacheKeys.length > SHIFT_CACHE_MAX) {
+          delete shiftCache[shiftCacheKeys.shift()];
+        }
+      }
+      currentShift = hit;
+      return hit;
+    } catch (err) {
+      return 0;
+    }
+  }
+
+  /* Read the cell that should appear at column x. Shifting the source rather
+   * than the destination keeps every column written exactly once, so no stale
+   * cells are left behind. Columns before the shift read from the tail of the
+   * line, which is blank precisely because the content was short enough to
+   * shift in the first place. */
+  function sourceColumn(x, cols) {
+    if (!currentShift) return x;
+    return x < currentShift ? cols - 1 : x - currentShift;
+  }
+
+  function caretShiftFor(term) {
+    try {
+      var buf = term.buffer.active;
+      var line = buf.getLine(buf.baseY + buf.cursorY);
+      if (!line) return 0;
+      var text = line.translateToString(true);
+      return computeShift(text, term.cols);
+    } catch (err) {
+      return 0;
+    }
+  }
+
   var target = typeof globalThis !== 'undefined' ? globalThis : this;
-  target.__rtlCaret = mapCaret;
+  target.__rtlCaret = function (term, c) {
+    var mapped = mapCaret(term, c);
+    if (!target.__rtlAlign) return mapped;
+    var shift = caretShiftFor(term);
+    return shift ? mapped + shift : mapped;
+  };
+  target.__rtlShift = function (line, cols) {
+    return target.__rtlAlign ? rowShift(line, cols) : 0;
+  };
+  target.__rtlSrc = sourceColumn;
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
-      mapCaret: mapCaret, recover: recover, spanOf: spanOf, candidates: candidates
+      mapCaret: mapCaret,
+      recover: recover,
+      spanOf: spanOf,
+      candidates: candidates,
+      computeShift: computeShift,
+      sourceColumn: sourceColumn,
+      setShift: function (n) { currentShift = n; }
     };
   }
 })();

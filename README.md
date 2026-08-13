@@ -67,6 +67,8 @@ rtl-caret status       # what is installed, changes nothing
 sudo rtl-caret uninstall
 ```
 
+`status` reports `caret` or `caret+align` for each patched file.
+
 `install` backs up each file it touches to `<file>.rtlbak` before the first
 change, is safe to run repeatedly, and refuses to touch a bundle whose shape it
 does not recognise. Editor upgrades replace the bundle, so run `install` again
@@ -84,6 +86,26 @@ PATH — common with nvm and fnm. Give it the full path:
 ```sh
 sudo "$(command -v node)" "$(npm root -g)/rtl-caret/bin/rtl-caret.js" install
 ```
+
+## Right-aligning RTL rows (opt in)
+
+```sh
+sudo rtl-caret install --align
+```
+
+Rows whose base direction is Hebrew are flushed to the right edge; rows that
+start in Latin script are left alone, so the decision is automatic and per row.
+
+The shift is applied to the *source* column each cell is read from, not the
+destination, so every column is still written exactly once and no stale cells
+are left behind. Rows containing box drawing or block characters are skipped,
+because Claude paints frames, separators and progress glyphs with those and
+shifting one would tear the layout apart. The caret is shifted by the same
+amount.
+
+Known limitation: mouse selection and link hovering use unshifted columns, so on
+a right-aligned row they address the wrong cells. Drop `--align` to turn this
+off while keeping the caret fix.
 
 ## Scope
 
