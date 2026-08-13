@@ -213,6 +213,48 @@ Known limitation: mouse selection and link hovering use unshifted columns, so on
 a right-aligned row they address the wrong cells. Drop `--align` to turn this
 off while keeping the caret fix.
 
+## Hebrew dictation (opt in)
+
+Claude Code's CLI has its own `/voice` mode. It records the microphone itself and
+streams the audio to whatever `VOICE_STREAM_BASE_URL` points at, so redirecting
+that one variable is enough to replace the transcription engine — the mic, the
+UI and the keybinding stay Claude's:
+
+```sh
+rtl-caret voice setup            # paste a Google Cloud key or service-account JSON
+rtl-caret voice -- claude        # run Claude with dictation redirected here
+```
+
+`voice` starts a WebSocket server on `127.0.0.1`, speaks Claude's `voice_stream`
+protocol (linear16 16 kHz mono in; `TranscriptText` / `TranscriptEndpoint` /
+`TranscriptError` out) and transcribes through Google Cloud Speech-to-Text V2
+with `iw-IL`. Anthropic's own backend transcribes Hebrew as English; this returns
+Hebrew.
+
+The default provider is `hybrid`: a fast model (`long` @ eu) streams the live
+grey text while a multilingual one (`chirp_3` @ us) produces the transcript that
+actually gets committed, which is what keeps Hebrew/English code-switching
+intact. `--provider chirp` uses a single engine and commits sooner.
+
+Other commands:
+
+```sh
+rtl-caret voice serve            # foreground server, prints the export line
+rtl-caret voice env              # export line for a server already running
+rtl-caret voice status           # is anything reachable, and how is it configured
+rtl-caret voice test 5           # record 5s from the mic and print the transcript
+```
+
+Configuration lives in `~/.config/rtl-caret/voice.json` (mode 0600), and
+`GOOGLE_STT_CREDENTIAL` / `GOOGLE_APPLICATION_CREDENTIALS` override the stored
+credential. Set `"enabled": false` there to turn dictation off without changing
+how you launch Claude — the wrapper then runs the command untouched.
+
+This is a separate feature: `install` and `uninstall` neither enable it nor
+depend on it, and nothing about it is injected into the editor. The server binds
+loopback only and is unauthenticated, because Claude's client cannot be told to
+send a token — any local process can reach it.
+
 ## Scope
 
 Fixes caret placement. It does not change arrow-key direction: `Right` still

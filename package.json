@@ -15,10 +15,12 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node test/run.js"
+    "test": "node test/run.js && node test/voice.js"
   },
   "dependencies": {
-    "bidi-js": "^1.0.3"
+    "@google-cloud/speech": "^8.0.1",
+    "bidi-js": "^1.0.3",
+    "ws": "^8.21.3"
   },
   "keywords": [
     "rtl",

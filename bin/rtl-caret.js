@@ -9,6 +9,7 @@ const USAGE = `rtl-caret - put the terminal caret on the glyph it is editing in 
   rtl-caret status              show what is installed, change nothing
   sudo rtl-caret install        patch the editor's WebGL renderer
   sudo rtl-caret uninstall      restore the backups
+  rtl-caret voice -- claude     run a command with Hebrew dictation (voice help)
 
   --align        also flush rows that start in Hebrew to the right edge
   --no-mirror    do not apply bidi mirroring to brackets in RTL runs
@@ -36,7 +37,17 @@ function needRoot() {
 }
 
 function main() {
-  const { cmd, apps, align, mirror } = parse(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+
+  // Dictation needs no editor installation and no root, so it is dispatched
+  // before the bundle search below and parses its own flags.
+  if (argv[0] === 'voice') {
+    return require('../src/voice/cli')
+      .run(argv.slice(1))
+      .then((code) => process.exit(code));
+  }
+
+  const { cmd, apps, align, mirror } = parse(argv);
   if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
     process.stdout.write(USAGE);
     return 0;
@@ -96,4 +107,6 @@ function main() {
   return 1;
 }
 
-process.exit(main());
+// The voice branch is async and exits on its own; everything else is a code.
+const result = main();
+if (typeof result === 'number') process.exit(result);
