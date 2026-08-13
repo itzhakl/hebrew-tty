@@ -50,9 +50,19 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
   dictation socket from `VOICE_STREAM_BASE_URL`. Nothing is patched, and the
   CLI's own microphone keeps recording.
 - The wire protocol belongs to Claude, not to us. Binary frames are linear16
-  16 kHz mono; replies are `TranscriptText` / `TranscriptEndpoint` /
-  `TranscriptError`. The client gives up 3000 ms after `CloseStream`, so every
-  settle and wait timeout must fit inside that budget.
+  16 kHz mono; replies are `TranscriptInterim` / `TranscriptText` /
+  `TranscriptEndpoint` / `TranscriptError`.
+- **Only `TranscriptEndpoint` commits.** The client replaces a single pending
+  buffer on every `TranscriptInterim`/`TranscriptText` (they are handled
+  identically) and promotes that buffer on `Endpoint`. So a commit is always a
+  pair, and the text sent must be the whole utterance, never a delta.
+- After `CloseStream` the client arms a 1500 ms no-data timer and a 5000 ms
+  safety timer. **Any frame clears the no-data timer**, which is why
+  `CloseStream` is answered instantly with a keepalive interim — going quiet
+  costs the accurate engine's transcript. Every settle and wait must fit inside
+  5000 ms, not 1500.
+- These numbers were read out of the CLI binary's `finalize()`. Re-check them
+  when dictation starts truncating after a Claude Code upgrade.
 - `src/voice/` must stay out of the `install` path: `require` it lazily, so the
   patch commands never load `ws` or `@google-cloud/speech`.
 - Ported from the `claude-code-hebrew` extension. Fixes belonging to both should

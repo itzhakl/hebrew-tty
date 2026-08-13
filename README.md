@@ -226,10 +226,17 @@ rtl-caret voice -- claude        # run Claude with dictation redirected here
 ```
 
 `voice` starts a WebSocket server on `127.0.0.1`, speaks Claude's `voice_stream`
-protocol (linear16 16 kHz mono in; `TranscriptText` / `TranscriptEndpoint` /
-`TranscriptError` out) and transcribes through Google Cloud Speech-to-Text V2
-with `iw-IL`. Anthropic's own backend transcribes Hebrew as English; this returns
-Hebrew.
+protocol (linear16 16 kHz mono in; `TranscriptInterim` / `TranscriptText` /
+`TranscriptEndpoint` / `TranscriptError` out) and transcribes through Google
+Cloud Speech-to-Text V2 with `iw-IL`. Anthropic's own backend transcribes Hebrew
+as English; this returns Hebrew.
+
+Grey text while you hold the key is a hypothesis, and the committed text arrives
+when you let go — that split is Claude's, not ours. What is ours is making sure
+the committed text is the accurate engine's and not the fast one's guess: when
+the CLI stops the stream it gives the server 1500 ms of silence before giving up,
+so the server answers immediately and keeps the socket alive for the full 5000 ms
+the client allows. That is the window `chirp_3` needs to land its final.
 
 The default provider is `hybrid`: a fast model (`long` @ eu) streams the live
 grey text while a multilingual one (`chirp_3` @ us) produces the transcript that

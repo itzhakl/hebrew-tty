@@ -294,6 +294,27 @@ async function testHybridSession() {
   s2.flush();
   a2.emit('error', { code: 14, message: 'unavailable' });
   eq(await s2.endSegment(), 'גיבוי', 'falls back to the fast transcript');
+
+  // An accurate engine that dies mid-sentence has heard only part of it. Its
+  // words are better and yet fewer, so committing them drops the tail.
+  const f3 = fakeStream();
+  const a3 = fakeStream();
+  const s3 = await new HybridProvider(chirpWith(f3), chirpWith(a3)).createSession({ onInterim: () => {}, onError: () => {} });
+  a3.emit('data', result('החצי הראשון', true));
+  a3.emit('end');
+  f3.emit('data', result('החצי הראשון והחצי השני', true));
+  s3.flush();
+  eq(await s3.endSegment(), 'החצי הראשון והחצי השני', 'a partial accurate transcript loses to the complete fast one');
+
+  // But an engine that ends because we flushed it is the one we want.
+  const f4 = fakeStream();
+  const a4 = fakeStream();
+  const s4 = await new HybridProvider(chirpWith(f4), chirpWith(a4)).createSession({ onInterim: () => {}, onError: () => {} });
+  f4.emit('data', result('גרסה מהירה', true));
+  s4.flush();
+  a4.emit('data', result('גרסה מדויקת', true));
+  a4.emit('end');
+  eq(await s4.endSegment(), 'גרסה מדויקת', 'a post-flush final still wins');
 }
 
 // ---------- the socket, end to end ----------
@@ -336,20 +357,186 @@ async function testSocketRoundTrip() {
   ws.send(Buffer.alloc(640), { binary: true });
   await new Promise((r) => setTimeout(r, 50));
   eq(received.length, 1, 'the interim is sent back');
-  eq(received[0].type, 'TranscriptText', 'interim frame type');
+  eq(received[0].type, 'TranscriptInterim', 'a hypothesis is sent as TranscriptInterim');
   eq(received[0].data, 'שלום', 'bidi controls are stripped from the transcript');
 
   const closed = new Promise((r) => ws.on('close', r));
   ws.send(JSON.stringify({ type: 'KeepAlive' }));
+  const closeStreamAt = Date.now();
   ws.send(JSON.stringify({ type: 'CloseStream' }));
   await closed;
+
+  // The client arms a 1500 ms no-data timer when it sends CloseStream, and any
+  // frame at all cancels it. Going quiet here costs the accurate transcript.
+  const answered = received.findIndex((m, i) => i > 0 && m.type === 'TranscriptInterim');
+  ok(answered !== -1, 'CloseStream is answered with a keepalive interim');
 
   const text = received.filter((m) => m.type === 'TranscriptText').map((m) => m.data);
   eq(text[text.length - 1], 'שלום עולם', 'the final transcript is committed on CloseStream');
   eq(received[received.length - 1].type, 'TranscriptEndpoint', 'the endpoint frame closes the utterance');
-  // Claude's client hangs its mic UI if the socket outlives its 3 s grace.
-  ok(true, 'the server closed the socket itself');
+  ok(Date.now() - closeStreamAt < server.SAFETY_MS, 'the socket closes inside the client safety timeout');
 
+  await instance.close();
+}
+
+/* Only TranscriptEndpoint commits: the client replaces its pending buffer on
+ * every Text/Interim frame and promotes it on Endpoint. A commit is therefore
+ * always a pair, and the text must be whole rather than a delta. */
+async function testCommitIsAlwaysAPair() {
+  const WebSocket = require('ws');
+  const instance = await server.VoiceStreamServer.start({
+    port: 0,
+    provider: {
+      id: 'two-utterances',
+      async createSession(cb) {
+        return {
+          sendAudio: () => {
+            cb.onFinal('משפט ראשון');
+            cb.onFinal('משפט שני');
+          },
+          flush: () => {},
+          endSegment: async () => '',
+          close: async () => {}
+        };
+      }
+    },
+    makeEndpointer: () => new Endpointer()
+  });
+  const ws = new WebSocket(`ws://127.0.0.1:${instance.port}${server.VOICE_STREAM_PATH}`);
+  const received = [];
+  ws.on('message', (d) => received.push(JSON.parse(d.toString())));
+  await new Promise((r) => ws.on('open', r));
+  ws.send(Buffer.alloc(640), { binary: true });
+  await new Promise((r) => setTimeout(r, 30));
+
+  eq(received.length, 4, 'two utterances, two frames each');
+  eq(received[0].type, 'TranscriptText', 'a commit leads with the text');
+  eq(received[1].type, 'TranscriptEndpoint', 'and is closed by an endpoint');
+  eq(received[2].data, 'משפט שני', 'the second utterance is sent whole, not as a delta');
+  eq(received[3].type, 'TranscriptEndpoint', 'the second commit is endpointed too');
+  ws.close();
+  await instance.close();
+}
+
+/* The CLI starts sending audio as soon as the socket is open, but opening a
+ * Chirp session costs an OAuth exchange and a gRPC channel on the first mic
+ * press. Frames that arrive in that window must be replayed, not dropped -
+ * dropping them eats the first words of the utterance. */
+async function testSlowSessionKeepsTheFirstWords() {
+  const WebSocket = require('ws');
+  const frames = [];
+  let release;
+  const opening = new Promise((r) => (release = r));
+  const instance = await server.VoiceStreamServer.start({
+    port: 0,
+    provider: {
+      id: 'slow',
+      async createSession() {
+        await opening;
+        return {
+          sendAudio: (buf) => frames.push(buf.length),
+          flush: () => {},
+          endSegment: async () => 'המילים הראשונות',
+          close: async () => {}
+        };
+      }
+    },
+    makeEndpointer: () => new Endpointer()
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${instance.port}${server.VOICE_STREAM_PATH}`);
+  const received = [];
+  ws.on('message', (d) => received.push(JSON.parse(d.toString())));
+  await new Promise((r) => ws.on('open', r));
+
+  for (let i = 0; i < 5; i++) ws.send(Buffer.alloc(640), { binary: true });
+  await new Promise((r) => setTimeout(r, 50));
+  eq(frames.length, 0, 'nothing reaches a session that has not opened');
+
+  release();
+  await new Promise((r) => setTimeout(r, 50));
+  eq(frames.length, 5, 'every frame from the opening window is replayed');
+
+  const closed = new Promise((r) => ws.on('close', r));
+  ws.send(JSON.stringify({ type: 'CloseStream' }));
+  await closed;
+  eq(received.filter((m) => m.type === 'TranscriptText')[0].data, 'המילים הראשונות', 'the utterance survives a slow open');
+  await instance.close();
+}
+
+/* An engine that shows interim text and then never finalises it would leave
+ * the user watching words disappear: Claude paints interims grey and drops
+ * them when the mic stops. */
+async function testInterimFallbackOnClose() {
+  const WebSocket = require('ws');
+  const instance = await server.VoiceStreamServer.start({
+    port: 0,
+    provider: {
+      id: 'never-finalises',
+      async createSession(cb) {
+        return {
+          sendAudio: () => cb.onInterim('מה שראיתי על המסך'),
+          flush: () => {},
+          endSegment: async () => '',
+          close: async () => {}
+        };
+      }
+    },
+    makeEndpointer: () => new Endpointer()
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${instance.port}${server.VOICE_STREAM_PATH}`);
+  const received = [];
+  ws.on('message', (d) => received.push(JSON.parse(d.toString())));
+  await new Promise((r) => ws.on('open', r));
+  ws.send(Buffer.alloc(640), { binary: true });
+  await new Promise((r) => setTimeout(r, 30));
+
+  const closed = new Promise((r) => ws.on('close', r));
+  ws.send(JSON.stringify({ type: 'CloseStream' }));
+  await closed;
+
+  const text = received.filter((m) => m.type === 'TranscriptText').map((m) => m.data);
+  eq(text[text.length - 1], 'מה שראיתי על המסך', 'the unfinalised interim is committed on close');
+  eq(received[received.length - 1].type, 'TranscriptEndpoint', 'and it is endpointed like any commit');
+  await instance.close();
+}
+
+/* The fallback must not double-commit text the engine did finalise. */
+async function testNoDoubleCommit() {
+  const WebSocket = require('ws');
+  const instance = await server.VoiceStreamServer.start({
+    port: 0,
+    provider: {
+      id: 'finalises',
+      async createSession(cb) {
+        return {
+          sendAudio: () => {
+            cb.onInterim('שלום');
+            cb.onFinal('שלום עולם');
+          },
+          flush: () => {},
+          endSegment: async () => '',
+          close: async () => {}
+        };
+      }
+    },
+    makeEndpointer: () => new Endpointer()
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${instance.port}${server.VOICE_STREAM_PATH}`);
+  const received = [];
+  ws.on('message', (d) => received.push(JSON.parse(d.toString())));
+  await new Promise((r) => ws.on('open', r));
+  ws.send(Buffer.alloc(640), { binary: true });
+  await new Promise((r) => setTimeout(r, 30));
+
+  const closed = new Promise((r) => ws.on('close', r));
+  ws.send(JSON.stringify({ type: 'CloseStream' }));
+  await closed;
+
+  const committed = received.filter((m) => m.type === 'TranscriptEndpoint');
+  eq(committed.length, 1, 'a finalised utterance is committed exactly once');
   await instance.close();
 }
 
@@ -402,6 +589,10 @@ async function main() {
   await testChirpSession();
   await testHybridSession();
   await testSocketRoundTrip();
+  await testCommitIsAlwaysAPair();
+  await testSlowSessionKeepsTheFirstWords();
+  await testInterimFallbackOnClose();
+  await testNoDoubleCommit();
   await testSocketReportsProviderFailure();
   await testHealthAndAdoption();
 
