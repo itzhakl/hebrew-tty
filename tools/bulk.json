@@ -1,0 +1,998 @@
+[
+ {
+  "row": "❯  םלוע םולש",
+  "caret": 11,
+  "y": 24,
+  "screen": [
+   {
+    "y": 1,
+    "text": "╭─── Claude Code v2.1.231 ─────────────────────────────────────────────────────────────────────────╮"
+   },
+   {
+    "y": 2,
+    "text": "│                                                    │ Tips for getting started                    │"
+   },
+   {
+    "y": 3,
+    "text": "│                 Welcome back itzik!                │ Run /init to create a CLAUDE.md file with … │"
+   },
+   {
+    "y": 4,
+    "text": "│                                                    │ ─────────────────────────────────────────── │"
+   },
+   {
+    "y": 5,
+    "text": "│                       ▐▛███▜▌                      │ What's new                                  │"
+   },
+   {
+    "y": 6,
+    "text": "│                      ▝▜█████▛▘                     │ Fixed MCP OAuth sign-in failing with a red… │"
+   },
+   {
+    "y": 7,
+    "text": "│                        ▘▘ ▝▝                       │ Documented `claude remote-control --contin… │"
+   },
+   {
+    "y": 8,
+    "text": "│   Opus 5 (1M context) with medi… · Claude Max ·    │ Added server-supplied Claude Code hook sup… │"
+   },
+   {
+    "y": 9,
+    "text": "│   itzhaklesh@gmail.com's Organization              │ /release-notes for more                     │"
+   },
+   {
+    "y": 10,
+    "text": "│                ~/Projects/rtl-caret                │                                             │"
+   },
+   {
+    "y": 11,
+    "text": "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
+   },
+   {
+    "y": 22,
+    "text": "                                                IDE extension install failed (see /status for info)"
+   },
+   {
+    "y": 23,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 24,
+    "text": "❯  םלוע םולש"
+   },
+   {
+    "y": 25,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 26,
+    "text": "  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_COD…"
+   },
+   {
+    "y": 27,
+    "text": "  itzhakl@fedora:~/Projects/rtl-caret  master* ⚠ PROD"
+   },
+   {
+    "y": 28,
+    "text": "  Opus 5 (1M context) | effort:medium | think:on | $0.00 | 0m01s | +0/-0 | i-have-adhd | v2.1.231"
+   },
+   {
+    "y": 29,
+    "text": "  ⏸ manual mode on"
+   }
+  ],
+  "kind": "paste",
+  "typed": "שלום עולם"
+ },
+ {
+  "row": "❯  םלוע hello םולש",
+  "caret": 17,
+  "y": 24,
+  "screen": [
+   {
+    "y": 1,
+    "text": "╭─── Claude Code v2.1.231 ─────────────────────────────────────────────────────────────────────────╮"
+   },
+   {
+    "y": 2,
+    "text": "│                                                    │ Tips for getting started                    │"
+   },
+   {
+    "y": 3,
+    "text": "│                 Welcome back itzik!                │ Run /init to create a CLAUDE.md file with … │"
+   },
+   {
+    "y": 4,
+    "text": "│                                                    │ ─────────────────────────────────────────── │"
+   },
+   {
+    "y": 5,
+    "text": "│                       ▐▛███▜▌                      │ What's new                                  │"
+   },
+   {
+    "y": 6,
+    "text": "│                      ▝▜█████▛▘                     │ Fixed MCP OAuth sign-in failing with a red… │"
+   },
+   {
+    "y": 7,
+    "text": "│                        ▘▘ ▝▝                       │ Documented `claude remote-control --contin… │"
+   },
+   {
+    "y": 8,
+    "text": "│   Opus 5 (1M context) with medi… · Claude Max ·    │ Added server-supplied Claude Code hook sup… │"
+   },
+   {
+    "y": 9,
+    "text": "│   itzhaklesh@gmail.com's Organization              │ /release-notes for more                     │"
+   },
+   {
+    "y": 10,
+    "text": "│                ~/Projects/rtl-caret                │                                             │"
+   },
+   {
+    "y": 11,
+    "text": "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
+   },
+   {
+    "y": 22,
+    "text": "                                                IDE extension install failed (see /status for info)"
+   },
+   {
+    "y": 23,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 24,
+    "text": "❯  םלוע hello םולש"
+   },
+   {
+    "y": 25,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 26,
+    "text": "  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_COD…"
+   },
+   {
+    "y": 27,
+    "text": "  itzhakl@fedora:~/Projects/rtl-caret  master* ⚠ PROD"
+   },
+   {
+    "y": 28,
+    "text": "  Opus 5 (1M context) | effort:medium | think:on | $0.00 | 0m01s | +0/-0 | i-have-adhd | v2.1.231"
+   },
+   {
+    "y": 29,
+    "text": "  ⏸ manual mode on"
+   }
+  ],
+  "kind": "paste",
+  "typed": "שלום hello עולם"
+ },
+ {
+  "row": "❯  םילימ רפסמ םע קבדומ טסקט לש הקידב",
+  "caret": 35,
+  "y": 24,
+  "screen": [
+   {
+    "y": 1,
+    "text": "╭─── Claude Code v2.1.231 ─────────────────────────────────────────────────────────────────────────╮"
+   },
+   {
+    "y": 2,
+    "text": "│                                                    │ Tips for getting started                    │"
+   },
+   {
+    "y": 3,
+    "text": "│                 Welcome back itzik!                │ Run /init to create a CLAUDE.md file with … │"
+   },
+   {
+    "y": 4,
+    "text": "│                                                    │ ─────────────────────────────────────────── │"
+   },
+   {
+    "y": 5,
+    "text": "│                       ▐▛███▜▌                      │ What's new                                  │"
+   },
+   {
+    "y": 6,
+    "text": "│                      ▝▜█████▛▘                     │ Fixed MCP OAuth sign-in failing with a red… │"
+   },
+   {
+    "y": 7,
+    "text": "│                        ▘▘ ▝▝                       │ Documented `claude remote-control --contin… │"
+   },
+   {
+    "y": 8,
+    "text": "│   Opus 5 (1M context) with medi… · Claude Max ·    │ Added server-supplied Claude Code hook sup… │"
+   },
+   {
+    "y": 9,
+    "text": "│   itzhaklesh@gmail.com's Organization              │ /release-notes for more                     │"
+   },
+   {
+    "y": 10,
+    "text": "│                ~/Projects/rtl-caret                │                                             │"
+   },
+   {
+    "y": 11,
+    "text": "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
+   },
+   {
+    "y": 23,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 24,
+    "text": "❯  םילימ רפסמ םע קבדומ טסקט לש הקידב"
+   },
+   {
+    "y": 25,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 26,
+    "text": "  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_COD…"
+   },
+   {
+    "y": 27,
+    "text": "  itzhakl@fedora:~/Projects/rtl-caret  master* ⚠ PROD"
+   },
+   {
+    "y": 28,
+    "text": "  Opus 5 (1M context) | effort:medium | think:on | $0.00 | 0m01s | +0/-0 | i-have-adhd | v2.1.231"
+   },
+   {
+    "y": 29,
+    "text": "  ⏸ manual mode on"
+   }
+  ],
+  "kind": "paste",
+  "typed": "בדיקה של טקסט מודבק עם מספר מילים"
+ },
+ {
+  "row": "   הזה טפשמה ףוסב הרוק המ םגו דרפנב",
+  "caret": 34,
+  "y": 24,
+  "screen": [
+   {
+    "y": 1,
+    "text": "╭─── Claude Code v2.1.231 ─────────────────────────────────────────────────────────────────────────╮"
+   },
+   {
+    "y": 2,
+    "text": "│                                                    │ Tips for getting started                    │"
+   },
+   {
+    "y": 3,
+    "text": "│                 Welcome back itzik!                │ Run /init to create a CLAUDE.md file with … │"
+   },
+   {
+    "y": 4,
+    "text": "│                                                    │ ─────────────────────────────────────────── │"
+   },
+   {
+    "y": 5,
+    "text": "│                       ▐▛███▜▌                      │ What's new                                  │"
+   },
+   {
+    "y": 6,
+    "text": "│                      ▝▜█████▛▘                     │ Fixed MCP OAuth sign-in failing with a red… │"
+   },
+   {
+    "y": 7,
+    "text": "│                        ▘▘ ▝▝                       │ Documented `claude remote-control --contin… │"
+   },
+   {
+    "y": 8,
+    "text": "│   Opus 5 (1M context) with medi… · Claude Max ·    │ Added server-supplied Claude Code hook sup… │"
+   },
+   {
+    "y": 9,
+    "text": "│   itzhaklesh@gmail.com's Organization              │ /release-notes for more                     │"
+   },
+   {
+    "y": 10,
+    "text": "│                ~/Projects/rtl-caret                │                                             │"
+   },
+   {
+    "y": 11,
+    "text": "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
+   },
+   {
+    "y": 22,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 23,
+    "text": "❯ תרדוסמ הרוש לכ ךיא תוארל ידכ טלקה תביתב תחא הרושמ רתוי ינפ לע שלגיהל דעונש דואמ ךורא טסקט והז"
+   },
+   {
+    "y": 24,
+    "text": "   הזה טפשמה ףוסב הרוק המ םגו דרפנב"
+   },
+   {
+    "y": 25,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 26,
+    "text": "  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_COD…"
+   },
+   {
+    "y": 27,
+    "text": "  itzhakl@fedora:~/Projects/rtl-caret  master* ⚠ PROD"
+   },
+   {
+    "y": 28,
+    "text": "  Opus 5 (1M context) | effort:medium | think:on | $0.00 | 0m01s | +0/-0 | i-have-adhd | v2.1.231"
+   },
+   {
+    "y": 29,
+    "text": "  ⏸ manual mode on"
+   }
+  ],
+  "kind": "paste",
+  "typed": "זהו טקסט ארוך מאוד שנועד להיגלש על פני יותר משורה אחת בתיבת הקלט כדי לראות איך כל שורה מסודרת בנפרד וגם מה קורה בסוף המשפט הזה"
+ },
+ {
+  "row": "   תישילש הרוש",
+  "caret": 13,
+  "y": 24,
+  "screen": [
+   {
+    "y": 1,
+    "text": "╭─── Claude Code v2.1.231 ─────────────────────────────────────────────────────────────────────────╮"
+   },
+   {
+    "y": 2,
+    "text": "│                                                    │ Tips for getting started                    │"
+   },
+   {
+    "y": 3,
+    "text": "│                 Welcome back itzik!                │ Run /init to create a CLAUDE.md file with … │"
+   },
+   {
+    "y": 4,
+    "text": "│                                                    │ ─────────────────────────────────────────── │"
+   },
+   {
+    "y": 5,
+    "text": "│                       ▐▛███▜▌                      │ What's new                                  │"
+   },
+   {
+    "y": 6,
+    "text": "│                      ▝▜█████▛▘                     │ Fixed MCP OAuth sign-in failing with a red… │"
+   },
+   {
+    "y": 7,
+    "text": "│                        ▘▘ ▝▝                       │ Documented `claude remote-control --contin… │"
+   },
+   {
+    "y": 8,
+    "text": "│   Opus 5 (1M context) with medi… · Claude Max ·    │ Added server-supplied Claude Code hook sup… │"
+   },
+   {
+    "y": 9,
+    "text": "│   itzhaklesh@gmail.com's Organization              │ /release-notes for more                     │"
+   },
+   {
+    "y": 10,
+    "text": "│                ~/Projects/rtl-caret                │                                             │"
+   },
+   {
+    "y": 11,
+    "text": "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
+   },
+   {
+    "y": 20,
+    "text": "                                                                           ctrl+g to edit in Codium"
+   },
+   {
+    "y": 21,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 22,
+    "text": "❯ הנושאר הרוש"
+   },
+   {
+    "y": 23,
+    "text": "  היינש הרוש"
+   },
+   {
+    "y": 24,
+    "text": "   תישילש הרוש"
+   },
+   {
+    "y": 25,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 26,
+    "text": "  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_COD…"
+   },
+   {
+    "y": 27,
+    "text": "  itzhakl@fedora:~/Projects/rtl-caret  master* ⚠ PROD"
+   },
+   {
+    "y": 28,
+    "text": "  Opus 5 (1M context) | effort:medium | think:on | $0.00 | 0m01s | +0/-0 | i-have-adhd | v2.1.231"
+   },
+   {
+    "y": 29,
+    "text": "  ⏸ manual mode on"
+   }
+  ],
+  "kind": "paste",
+  "typed": "שורה ראשונה\nשורה שנייה\nשורה שלישית"
+ },
+ {
+  "row": "❯  .7 הרוש src/auth.ts - )הקידב( 42 ,םולש",
+  "caret": 40,
+  "y": 24,
+  "screen": [
+   {
+    "y": 1,
+    "text": "╭─── Claude Code v2.1.231 ─────────────────────────────────────────────────────────────────────────╮"
+   },
+   {
+    "y": 2,
+    "text": "│                                                    │ Tips for getting started                    │"
+   },
+   {
+    "y": 3,
+    "text": "│                 Welcome back itzik!                │ Run /init to create a CLAUDE.md file with … │"
+   },
+   {
+    "y": 4,
+    "text": "│                                                    │ ─────────────────────────────────────────── │"
+   },
+   {
+    "y": 5,
+    "text": "│                       ▐▛███▜▌                      │ What's new                                  │"
+   },
+   {
+    "y": 6,
+    "text": "│                      ▝▜█████▛▘                     │ Fixed MCP OAuth sign-in failing with a red… │"
+   },
+   {
+    "y": 7,
+    "text": "│                        ▘▘ ▝▝                       │ Documented `claude remote-control --contin… │"
+   },
+   {
+    "y": 8,
+    "text": "│   Opus 5 (1M context) with medi… · Claude Max ·    │ Added server-supplied Claude Code hook sup… │"
+   },
+   {
+    "y": 9,
+    "text": "│   itzhaklesh@gmail.com's Organization              │ /release-notes for more                     │"
+   },
+   {
+    "y": 10,
+    "text": "│                ~/Projects/rtl-caret                │                                             │"
+   },
+   {
+    "y": 11,
+    "text": "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
+   },
+   {
+    "y": 23,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 24,
+    "text": "❯  .7 הרוש src/auth.ts - )הקידב( 42 ,םולש"
+   },
+   {
+    "y": 25,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 26,
+    "text": "  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_COD…"
+   },
+   {
+    "y": 27,
+    "text": "  itzhakl@fedora:~/Projects/rtl-caret  master* ⚠ PROD"
+   },
+   {
+    "y": 28,
+    "text": "  Opus 5 (1M context) | effort:medium | think:on | $0.00 | 0m01s | +0/-0 | i-have-adhd | v2.1.231"
+   },
+   {
+    "y": 29,
+    "text": "  ⏸ manual mode on"
+   }
+  ],
+  "kind": "paste",
+  "typed": "שלום, 42 (בדיקה) - src/auth.ts שורה 7."
+ },
+ {
+  "row": "❯ [Pasted text #1 +14 lines]",
+  "caret": 28,
+  "y": 24,
+  "screen": [
+   {
+    "y": 1,
+    "text": "╭─── Claude Code v2.1.231 ─────────────────────────────────────────────────────────────────────────╮"
+   },
+   {
+    "y": 2,
+    "text": "│                                                    │ Tips for getting started                    │"
+   },
+   {
+    "y": 3,
+    "text": "│                 Welcome back itzik!                │ Run /init to create a CLAUDE.md file with … │"
+   },
+   {
+    "y": 4,
+    "text": "│                                                    │ ─────────────────────────────────────────── │"
+   },
+   {
+    "y": 5,
+    "text": "│                       ▐▛███▜▌                      │ What's new                                  │"
+   },
+   {
+    "y": 6,
+    "text": "│                      ▝▜█████▛▘                     │ Fixed MCP OAuth sign-in failing with a red… │"
+   },
+   {
+    "y": 7,
+    "text": "│                        ▘▘ ▝▝                       │ Documented `claude remote-control --contin… │"
+   },
+   {
+    "y": 8,
+    "text": "│   Opus 5 (1M context) with medi… · Claude Max ·    │ Added server-supplied Claude Code hook sup… │"
+   },
+   {
+    "y": 9,
+    "text": "│   itzhaklesh@gmail.com's Organization              │ /release-notes for more                     │"
+   },
+   {
+    "y": 10,
+    "text": "│                ~/Projects/rtl-caret                │                                             │"
+   },
+   {
+    "y": 11,
+    "text": "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
+   },
+   {
+    "y": 23,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 24,
+    "text": "❯ [Pasted text #1 +14 lines]"
+   },
+   {
+    "y": 25,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 26,
+    "text": "  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_COD…"
+   },
+   {
+    "y": 27,
+    "text": "  itzhakl@fedora:~/Projects/rtl-caret  master* ⚠ PROD"
+   },
+   {
+    "y": 28,
+    "text": "  Opus 5 (1M context) | effort:medium | think:on | $0.00 | 0m01s | +0/-0 | i-have-adhd | v2.1.231"
+   },
+   {
+    "y": 29,
+    "text": "  paste again to expand"
+   }
+  ],
+  "kind": "paste",
+  "typed": "שורה מספר 1 של טקסט ארוך מודבק\nשורה מספר 2 של טקסט ארוך מודבק\nשורה מספר 3 של טקסט ארוך מודבק\nשורה מספר 4 של טקסט ארוך מודבק\nשורה מספר 5 של טקסט ארוך מודבק\nשורה מספר 6 של טקסט ארוך מודבק\nשורה מספר 7 של טקסט ארוך מודבק\nשורה מספר 8 של טקסט ארוך מודבק\nשורה מספר 9 של טקסט ארוך מודבק\nשורה מספר 10 של טקסט ארוך מודבק\nשורה מספר 11 של טקסט ארוך מודבק\nשורה מספר 12 של טקסט ארוך מודבק\nשורה מספר 13 של טקסט ארוך מודבק\nשורה מספר 14 של טקסט ארוך מודבק\nשורה מספר 15 של טקסט ארוך מודבק"
+ },
+ {
+  "row": "❯  םלוע םולש",
+  "caret": 11,
+  "y": 24,
+  "screen": [
+   {
+    "y": 1,
+    "text": "╭─── Claude Code v2.1.231 ─────────────────────────────────────────────────────────────────────────╮"
+   },
+   {
+    "y": 2,
+    "text": "│                                                    │ Tips for getting started                    │"
+   },
+   {
+    "y": 3,
+    "text": "│                 Welcome back itzik!                │ Run /init to create a CLAUDE.md file with … │"
+   },
+   {
+    "y": 4,
+    "text": "│                                                    │ ─────────────────────────────────────────── │"
+   },
+   {
+    "y": 5,
+    "text": "│                       ▐▛███▜▌                      │ What's new                                  │"
+   },
+   {
+    "y": 6,
+    "text": "│                      ▝▜█████▛▘                     │ Fixed MCP OAuth sign-in failing with a red… │"
+   },
+   {
+    "y": 7,
+    "text": "│                        ▘▘ ▝▝                       │ Documented `claude remote-control --contin… │"
+   },
+   {
+    "y": 8,
+    "text": "│   Opus 5 (1M context) with medi… · Claude Max ·    │ Added server-supplied Claude Code hook sup… │"
+   },
+   {
+    "y": 9,
+    "text": "│   itzhaklesh@gmail.com's Organization              │ /release-notes for more                     │"
+   },
+   {
+    "y": 10,
+    "text": "│                ~/Projects/rtl-caret                │                                             │"
+   },
+   {
+    "y": 11,
+    "text": "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
+   },
+   {
+    "y": 23,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 24,
+    "text": "❯  םלוע םולש"
+   },
+   {
+    "y": 25,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 26,
+    "text": "  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_COD…"
+   },
+   {
+    "y": 27,
+    "text": "  itzhakl@fedora:~/Projects/rtl-caret  master* ⚠ PROD"
+   },
+   {
+    "y": 28,
+    "text": "  Opus 5 (1M context) | effort:medium | think:on | $0.00 | 0m01s | +0/-0 | i-have-adhd | v2.1.231"
+   },
+   {
+    "y": 29,
+    "text": "  ⏸ manual mode on"
+   }
+  ],
+  "kind": "dictation",
+  "typed": "שלום עולם"
+ },
+ {
+  "row": "❯  עמשנ המ םלוע םולש",
+  "caret": 19,
+  "y": 24,
+  "screen": [
+   {
+    "y": 1,
+    "text": "╭─── Claude Code v2.1.231 ─────────────────────────────────────────────────────────────────────────╮"
+   },
+   {
+    "y": 2,
+    "text": "│                                                    │ Tips for getting started                    │"
+   },
+   {
+    "y": 3,
+    "text": "│                 Welcome back itzik!                │ Run /init to create a CLAUDE.md file with … │"
+   },
+   {
+    "y": 4,
+    "text": "│                                                    │ ─────────────────────────────────────────── │"
+   },
+   {
+    "y": 5,
+    "text": "│                       ▐▛███▜▌                      │ What's new                                  │"
+   },
+   {
+    "y": 6,
+    "text": "│                      ▝▜█████▛▘                     │ Fixed MCP OAuth sign-in failing with a red… │"
+   },
+   {
+    "y": 7,
+    "text": "│                        ▘▘ ▝▝                       │ Documented `claude remote-control --contin… │"
+   },
+   {
+    "y": 8,
+    "text": "│   Opus 5 (1M context) with medi… · Claude Max ·    │ Added server-supplied Claude Code hook sup… │"
+   },
+   {
+    "y": 9,
+    "text": "│   itzhaklesh@gmail.com's Organization              │ /release-notes for more                     │"
+   },
+   {
+    "y": 10,
+    "text": "│                ~/Projects/rtl-caret                │                                             │"
+   },
+   {
+    "y": 11,
+    "text": "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
+   },
+   {
+    "y": 23,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 24,
+    "text": "❯  עמשנ המ םלוע םולש"
+   },
+   {
+    "y": 25,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 26,
+    "text": "  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_COD…"
+   },
+   {
+    "y": 27,
+    "text": "  itzhakl@fedora:~/Projects/rtl-caret  master* ⚠ PROD"
+   },
+   {
+    "y": 28,
+    "text": "  Opus 5 (1M context) | effort:medium | think:on | $0.00 | 0m01s | +0/-0 | i-have-adhd | v2.1.231"
+   },
+   {
+    "y": 29,
+    "text": "  ⏸ manual mode on"
+   }
+  ],
+  "kind": "dictation",
+  "typed": "שלום עולם מה נשמע"
+ },
+ {
+  "row": "❯  הצור ינא םויה",
+  "caret": 15,
+  "y": 24,
+  "screen": [
+   {
+    "y": 1,
+    "text": "╭─── Claude Code v2.1.231 ─────────────────────────────────────────────────────────────────────────╮"
+   },
+   {
+    "y": 2,
+    "text": "│                                                    │ Tips for getting started                    │"
+   },
+   {
+    "y": 3,
+    "text": "│                 Welcome back itzik!                │ Run /init to create a CLAUDE.md file with … │"
+   },
+   {
+    "y": 4,
+    "text": "│                                                    │ ─────────────────────────────────────────── │"
+   },
+   {
+    "y": 5,
+    "text": "│                       ▐▛███▜▌                      │ What's new                                  │"
+   },
+   {
+    "y": 6,
+    "text": "│                      ▝▜█████▛▘                     │ Fixed MCP OAuth sign-in failing with a red… │"
+   },
+   {
+    "y": 7,
+    "text": "│                        ▘▘ ▝▝                       │ Documented `claude remote-control --contin… │"
+   },
+   {
+    "y": 8,
+    "text": "│   Opus 5 (1M context) with medi… · Claude Max ·    │ Added server-supplied Claude Code hook sup… │"
+   },
+   {
+    "y": 9,
+    "text": "│   itzhaklesh@gmail.com's Organization              │ /release-notes for more                     │"
+   },
+   {
+    "y": 10,
+    "text": "│                ~/Projects/rtl-caret                │                                             │"
+   },
+   {
+    "y": 11,
+    "text": "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
+   },
+   {
+    "y": 23,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 24,
+    "text": "❯  הצור ינא םויה"
+   },
+   {
+    "y": 25,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 26,
+    "text": "  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_COD…"
+   },
+   {
+    "y": 27,
+    "text": "  itzhakl@fedora:~/Projects/rtl-caret  master* ⚠ PROD"
+   },
+   {
+    "y": 28,
+    "text": "  Opus 5 (1M context) | effort:medium | think:on | $0.00 | 0m01s | +0/-0 | i-have-adhd | v2.1.231"
+   },
+   {
+    "y": 29,
+    "text": "  ⏸ manual mode on"
+   }
+  ],
+  "kind": "dictation",
+  "typed": "היום אני רוצה"
+ },
+ {
+  "row": "❯  ןוויכה תא קודבל הצור ינא םויה",
+  "caret": 31,
+  "y": 24,
+  "screen": [
+   {
+    "y": 1,
+    "text": "╭─── Claude Code v2.1.231 ─────────────────────────────────────────────────────────────────────────╮"
+   },
+   {
+    "y": 2,
+    "text": "│                                                    │ Tips for getting started                    │"
+   },
+   {
+    "y": 3,
+    "text": "│                 Welcome back itzik!                │ Run /init to create a CLAUDE.md file with … │"
+   },
+   {
+    "y": 4,
+    "text": "│                                                    │ ─────────────────────────────────────────── │"
+   },
+   {
+    "y": 5,
+    "text": "│                       ▐▛███▜▌                      │ What's new                                  │"
+   },
+   {
+    "y": 6,
+    "text": "│                      ▝▜█████▛▘                     │ Fixed MCP OAuth sign-in failing with a red… │"
+   },
+   {
+    "y": 7,
+    "text": "│                        ▘▘ ▝▝                       │ Documented `claude remote-control --contin… │"
+   },
+   {
+    "y": 8,
+    "text": "│   Opus 5 (1M context) with medi… · Claude Max ·    │ Added server-supplied Claude Code hook sup… │"
+   },
+   {
+    "y": 9,
+    "text": "│   itzhaklesh@gmail.com's Organization              │ /release-notes for more                     │"
+   },
+   {
+    "y": 10,
+    "text": "│                ~/Projects/rtl-caret                │                                             │"
+   },
+   {
+    "y": 11,
+    "text": "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
+   },
+   {
+    "y": 23,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 24,
+    "text": "❯  ןוויכה תא קודבל הצור ינא םויה"
+   },
+   {
+    "y": 25,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 26,
+    "text": "  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_COD…"
+   },
+   {
+    "y": 27,
+    "text": "  itzhakl@fedora:~/Projects/rtl-caret  master* ⚠ PROD"
+   },
+   {
+    "y": 28,
+    "text": "  Opus 5 (1M context) | effort:medium | think:on | $0.00 | 0m01s | +0/-0 | i-have-adhd | v2.1.231"
+   },
+   {
+    "y": 29,
+    "text": "  ⏸ manual mode on"
+   }
+  ],
+  "kind": "dictation",
+  "typed": "היום אני רוצה לבדוק את הכיוון"
+ },
+ {
+  "row": "❯  תויתואה לש ןוויכה תא קודבל הצור ינא םויה",
+  "caret": 42,
+  "y": 24,
+  "screen": [
+   {
+    "y": 1,
+    "text": "╭─── Claude Code v2.1.231 ─────────────────────────────────────────────────────────────────────────╮"
+   },
+   {
+    "y": 2,
+    "text": "│                                                    │ Tips for getting started                    │"
+   },
+   {
+    "y": 3,
+    "text": "│                 Welcome back itzik!                │ Run /init to create a CLAUDE.md file with … │"
+   },
+   {
+    "y": 4,
+    "text": "│                                                    │ ─────────────────────────────────────────── │"
+   },
+   {
+    "y": 5,
+    "text": "│                       ▐▛███▜▌                      │ What's new                                  │"
+   },
+   {
+    "y": 6,
+    "text": "│                      ▝▜█████▛▘                     │ Fixed MCP OAuth sign-in failing with a red… │"
+   },
+   {
+    "y": 7,
+    "text": "│                        ▘▘ ▝▝                       │ Documented `claude remote-control --contin… │"
+   },
+   {
+    "y": 8,
+    "text": "│   Opus 5 (1M context) with medi… · Claude Max ·    │ Added server-supplied Claude Code hook sup… │"
+   },
+   {
+    "y": 9,
+    "text": "│   itzhaklesh@gmail.com's Organization              │ /release-notes for more                     │"
+   },
+   {
+    "y": 10,
+    "text": "│                ~/Projects/rtl-caret                │                                             │"
+   },
+   {
+    "y": 11,
+    "text": "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
+   },
+   {
+    "y": 23,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 24,
+    "text": "❯  תויתואה לש ןוויכה תא קודבל הצור ינא םויה"
+   },
+   {
+    "y": 25,
+    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────"
+   },
+   {
+    "y": 26,
+    "text": "  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_COD…"
+   },
+   {
+    "y": 27,
+    "text": "  itzhakl@fedora:~/Projects/rtl-caret  master* ⚠ PROD"
+   },
+   {
+    "y": 28,
+    "text": "  Opus 5 (1M context) | effort:medium | think:on | $0.00 | 0m01s | +0/-0 | i-have-adhd | v2.1.231"
+   },
+   {
+    "y": 29,
+    "text": "  ⏸ manual mode on"
+   }
+  ],
+  "kind": "dictation",
+  "typed": "היום אני רוצה לבדוק את הכיוון של האותיות"
+ }
+]
