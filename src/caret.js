@@ -130,6 +130,25 @@
     return found[0];
   }
 
+  /* ---- diagnostics ------------------------------------------------------
+   *
+   * A ring of the decisions taken for rows that actually contain RTL, one
+   * entry per distinct row content, readable from the editor's devtools
+   * console as __rtlLog. Rows repaint many times per second, so only a change
+   * in what the row says is recorded. */
+  var LOG_MAX = 300;
+  var log = [];
+  var logSeen = Object.create(null);
+
+  function record(entry) {
+    var key = entry.kind + '|' + entry.row;
+    var sig = entry.text + '|' + entry.caret;
+    if (logSeen[key] === sig) return;
+    logSeen[key] = sig;
+    log.push(entry);
+    if (log.length > LOG_MAX) log.shift();
+  }
+
   function isRtlAt(levels, i) {
     try {
       var arr = levels && levels.levels;
@@ -157,6 +176,8 @@
     return { a: a, e: e };
   }
 
+  var diag = null;
+
   function mapCaret(term, c) {
     try {
       var buf = term.buffer.active;
@@ -164,12 +185,14 @@
       if (!line) return c;
       var s = line.translateToString(true);
       if (!RTL.test(s)) return c;
+      diag = { kind: 'caret', row: buf.cursorY, text: s, caret: c, recovered: null };
 
       var sp = spanOf(s), a = sp.a, e = sp.e;
       if (e < a || c < a) return c;
 
       var rec = recover(s.slice(a, e + 1), buf.cursorY);
       if (!rec) return c;
+      diag.recovered = rec.text;
 
       var n = rec.order.length;
       var d = c - a;
@@ -254,6 +277,9 @@
         if (shiftCacheKeys.length > SHIFT_CACHE_MAX) {
           delete shiftCache[shiftCacheKeys.shift()];
         }
+      }
+      if (RTL.test(text)) {
+        record({ kind: 'row', row: rowKey, text: text, caret: -1, cols: cols, shift: hit });
       }
       currentShift = hit;
       return hit;
@@ -408,11 +434,18 @@
 
   var target = typeof globalThis !== 'undefined' ? globalThis : this;
   target.__rtlCaret = function (term, c) {
+    diag = null;
     var mapped = mapCaret(term, c);
-    if (!target.__rtlAlign) return mapped;
-    var shift = caretShiftFor(term);
+    var shift = target.__rtlAlign ? caretShiftFor(term) : 0;
+    if (diag) {
+      diag.mapped = mapped;
+      diag.shift = shift;
+      record(diag);
+      diag = null;
+    }
     return shift ? mapped + shift : mapped;
   };
+  target.__rtlLog = log;
   target.__rtlRow = rowSetup;
   target.__rtlMirror = mirrorCell;
   target.__rtlSrc = sourceColumn;
