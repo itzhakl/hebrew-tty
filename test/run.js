@@ -258,5 +258,50 @@ console.log('\nmirroring: brackets in an RTL run must be drawn mirrored');
   console.log(`  cases ${lines.length + 5}`);
 }
 
+/* Copy: the buffer holds painted order, so copying a row verbatim and pasting
+ * it back reorders it a second time. Every recorded row must come back as the
+ * text that produced it, which is exactly what makes the round trip hold. */
+console.log('\ncopy: a painted row must come back as the text it stands for');
+{
+  /* The per-row memo is the tie-break, and the checks above have already
+   * replayed these rows several times over. A fresh module gives the copy
+   * checks the same starting point a new terminal has. */
+  const caretPath = require.resolve(path.join(__dirname, '..', 'src', 'caret.js'));
+  delete require.cache[caretPath];
+  const C = require(caretPath);
+
+  let copyBad = 0;
+  for (const { typed, row, caret } of typing) {
+    const { a, e } = C.spanOf(row);
+    if (e < a) continue;
+    // A row is painted before it can be selected, and painting is what breaks
+    // the tie between the logical texts that repaint identically.
+    C.mapCaret(term(row), caret);
+    checks++;
+    const out = C.logicalLine(row);
+    // Recovery is a permutation, so the span keeps its place and its length.
+    const got = out.slice(a, e + 1);
+    if (got !== typed && got !== `${typed} ` && got !== typed.replace(/\s+$/, '')) {
+      copyBad++;
+      fail(`copy ${JSON.stringify(typed)} came back ${JSON.stringify(got)}`);
+      continue;
+    }
+    checks++;
+    if (out.slice(0, a) !== row.slice(0, a) || out.slice(e + 1) !== row.slice(e + 1)) {
+      copyBad++;
+      fail(`copy ${JSON.stringify(typed)} disturbed the prompt or the padding`);
+    }
+  }
+  console.log(`  samples ${typing.length}, failures ${copyBad}`);
+
+  // Anything the recovery cannot verify, and anything without RTL, is handed
+  // back untouched rather than guessed at.
+  for (const line of ['❯  npm run build', '  const x = foo(bar);', '', '   ']) {
+    checks++;
+    if (C.logicalLine(line) !== line) fail(`copy changed a non-RTL line: ${JSON.stringify(line)}`);
+  }
+  console.log('  non-RTL lines untouched');
+}
+
 console.log(`\n${failures ? `${failures} FAILURES` : 'all checks pass'}  (${checks} checks)`);
 process.exit(failures ? 1 : 0);

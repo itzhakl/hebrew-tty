@@ -108,6 +108,20 @@
     return i;
   }
 
+  /* Typing grows the line and deleting shrinks it, so the text that continues
+   * the row is one where the shorter of the two is a prefix of the longer.
+   * Anything else is a different line - the input was cleared and something
+   * new was typed - and a stray leading character in common says nothing.
+   * Scoring those as zero keeps a new line from inheriting the old line's
+   * direction. The trailing pad cell is not part of the comparison. */
+  function continuationScore(text, prev) {
+    var a = text.replace(/\s+$/, '');
+    var b = prev.replace(/\s+$/, '');
+    if (!b) return 0;
+    var n = commonPrefix(a, b);
+    return n === a.length || n === b.length ? n : 0;
+  }
+
   // Last resolved logical text per input row. Typing grows the line one
   // character at a time, and the short prefix was unambiguous, so the candidate
   // that continues it is the right one. Deleting shrinks it, which the same
@@ -121,13 +135,32 @@
       var prev = memo[rowKey] || '';
       var best = 0, bestScore = -1;
       for (var i = 0; i < found.length; i++) {
-        var score = commonPrefix(found[i].text, prev);
+        var score = continuationScore(found[i].text, prev);
         if (score > bestScore) { bestScore = score; best = i; }
       }
       found = [found[best]];
     }
-    if (rowKey !== undefined) memo[rowKey] = found[0].text;
+    if (rowKey !== undefined) {
+      memo[rowKey] = found[0].text;
+      // Painting resolved this exact row with the typing history to break the
+      // tie. A copy of the same row has no history of its own, so it reuses
+      // the answer instead of guessing again.
+      rememberPainted(painted, found[0].text);
+    }
     return found[0];
+  }
+
+  var paintedMemo = Object.create(null);
+  var paintedKeys = [];
+  var PAINTED_MAX = 400;
+
+  function rememberPainted(painted, logical) {
+    if (paintedMemo[painted] === logical) return;
+    if (paintedMemo[painted] === undefined) {
+      paintedKeys.push(painted);
+      if (paintedKeys.length > PAINTED_MAX) delete paintedMemo[paintedKeys.shift()];
+    }
+    paintedMemo[painted] = logical;
   }
 
   /* ---- diagnostics ------------------------------------------------------
@@ -420,6 +453,43 @@
     }
   }
 
+  /* ---- copy: hand back logical text, not painted order ------------------ */
+
+  /* The buffer holds what Claude painted, which is visual order, and xterm
+   * copies its cells verbatim. Paste that back and Claude reorders it a second
+   * time, so the pasted run lands mirrored while everything typed around it
+   * reads correctly. Recovering the logical text on the way out makes copy and
+   * paste a round trip - and makes Hebrew copied into any other program come
+   * out readable.
+   *
+   * A line whose recovery does not verify is handed back untouched, and no row
+   * key is passed, so the per-row memo the caret depends on is not disturbed by
+   * a selection. */
+  function logicalLine(painted) {
+    if (!painted || painted.length > MAX_LINE || !RTL.test(painted)) return painted;
+    // The same span the caret works on: the prompt glyph and the wrap indent
+    // were painted outside the reordered run, so folding them in would leave
+    // nothing that verifies.
+    var sp = spanOf(painted), a = sp.a, e = sp.e;
+    if (e < a) return painted;
+    var body = painted.slice(a, e + 1);
+
+    // A line that reorders to itself needed no reordering, so what is on the
+    // screen is already the logical text. Copying it verbatim is right, and
+    // this is the case the tie-break below cannot see on its own.
+    var self = reorderOf(body);
+    if (!self || self.painted === body) return painted;
+
+    var known = paintedMemo[body];
+    var logical = known !== undefined ? known : null;
+    if (logical === null) {
+      var rec = recover(body);
+      if (!rec) return painted;
+      logical = rec.text;
+    }
+    return painted.slice(0, a) + logical + painted.slice(e + 1);
+  }
+
   function caretShiftFor(term) {
     try {
       var buf = term.buffer.active;
@@ -445,6 +515,15 @@
     }
     return shift ? mapped + shift : mapped;
   };
+  target.__rtlCopy = function (lines) {
+    try {
+      if (!target.__rtlCopyLogical || !lines) return lines;
+      for (var i = 0; i < lines.length; i++) lines[i] = logicalLine(lines[i]);
+      return lines;
+    } catch (err) {
+      return lines;
+    }
+  };
   target.__rtlLog = log;
   target.__rtlRow = rowSetup;
   target.__rtlMirror = mirrorCell;
@@ -458,6 +537,7 @@
       computeShift: computeShift,
       sourceColumn: sourceColumn,
       setShift: function (n) { currentShift = n; },
+      logicalLine: logicalLine,
       rowMirrors: rowMirrors,
       mirrorCell: mirrorCell,
       setMirrors: function (m) { currentMirrors = m; }

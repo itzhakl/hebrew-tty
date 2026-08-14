@@ -13,17 +13,19 @@ const USAGE = `rtl-caret - put the terminal caret on the glyph it is editing in 
 
   --align        also flush rows that start in Hebrew to the right edge
   --no-mirror    do not apply bidi mirroring to brackets in RTL runs
+  --no-copy      copy RTL rows as painted, not as the text they stand for
   --app <path>   extra application root to search, repeatable
 
 Editor bundles are replaced by upgrades, so re-run install afterwards.
 `;
 
 function parse(argv) {
-  const opts = { cmd: null, apps: [], align: false, mirror: true };
+  const opts = { cmd: null, apps: [], align: false, mirror: true, copy: true };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--app') opts.apps.push(argv[++i]);
     else if (argv[i] === '--align') opts.align = true;
     else if (argv[i] === '--no-mirror') opts.mirror = false;
+    else if (argv[i] === '--no-copy') opts.copy = false;
     else if (!opts.cmd) opts.cmd = argv[i];
   }
   return opts;
@@ -47,7 +49,7 @@ function main() {
       .then((code) => process.exit(code));
   }
 
-  const { cmd, apps, align, mirror } = parse(argv);
+  const { cmd, apps, align, mirror, copy } = parse(argv);
   if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
     process.stdout.write(USAGE);
     return 0;
@@ -68,9 +70,11 @@ function main() {
       const v = patch.versionOf(file);
       let parts = '';
       if (v) {
-        const on = ['caret'];
-        if (v.mirror) on.push('mirror');
-        if (v.align) on.push('align');
+        const on = v.kind === 'core' ? ['copy'] : ['caret'];
+        if (v.kind === 'webgl') {
+          if (v.mirror) on.push('mirror');
+          if (v.align) on.push('align');
+        }
         parts = `${on.join('+')}${v.current ? '' : ' (stale, re-run install)'}`;
       }
       console.log(
@@ -85,7 +89,7 @@ function main() {
     needRoot();
     let failed = 0;
     for (const file of targets) {
-      const r = patch.applyTo(file, { align, mirror });
+      const r = patch.applyTo(file, { align, mirror, copy });
       if (!r.ok) failed++;
       console.log(`${r.ok ? 'ok  ' : 'skip'}  ${r.note}  ${file}`);
     }
