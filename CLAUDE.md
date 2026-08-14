@@ -15,6 +15,7 @@ Zero-dependency at runtime except `bidi-js`, which is inlined into the patch.
 | `test/run.js`        | assertion runner over `test/fixtures/*.json`                   |
 | `test/voice.js`      | assertion runner for `src/voice/`                              |
 | `tools/*.py`         | pty probes that record the fixtures; not shipped runtime code  |
+| `tools/editor-probe.js` | drives a real patched editor over CDP; the only way to see the renderer |
 
 ## Commands
 
@@ -43,6 +44,12 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
 - `src/patch.js` matches the bundle with regex anchors. Editor upgrades replace
   the bundle, so a failed match means "skip", never a corrupt write. Writes are
   atomic and always leave a backup.
+- Two bundles are patched, and the payload in both must carry the same flags:
+  the WebGL addon for the caret, mirroring and alignment, and xterm's core for
+  copying. Whichever loads first wins, and the rest is skipped by the guard.
+- Copying returns the logical text, so copy and paste round trip. A line that
+  reorders to itself, or whose recovery does not verify, is copied verbatim -
+  never guessed at.
 
 ## Voice
 
