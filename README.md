@@ -188,6 +188,28 @@ None of this reorders anything - the bidi reordering is Claude Code's, and the
 caret mapping is this patch's. The font's only job is to keep one character in
 one cell so both of those stay true on screen.
 
+## Copying Hebrew out of the terminal
+
+The buffer holds what Claude painted, which is visual order, and xterm copies
+its cells verbatim. So a copied Hebrew line comes out reversed - and pasting it
+back into Claude reorders it a second time, which is why a pasted run lands
+mirrored while everything typed around it reads correctly.
+
+`install` patches xterm's own `selectionText` so a selection is handed back as
+the text it stands for, recovered the same way the caret recovers it and left
+untouched whenever that recovery does not verify. Copy and paste round trip,
+and Hebrew copied into any other program arrives readable.
+
+A line that reorders to itself needed no reordering and is copied verbatim,
+which is what keeps ordinary Latin lines and mixed lines that already read
+correctly out of the way. Where two logical texts repaint identically, the
+answer the renderer already resolved for that row is reused rather than guessed
+at again.
+
+Turn it off with `--no-copy`. The case for turning it off is Hebrew that was
+never reordered in the first place - raw output from a shell command rather than
+from Claude - which is drawn in logical order and is copied correctly today.
+
 ## Right-aligning RTL rows (opt in)
 
 ```sh
