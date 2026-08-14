@@ -262,6 +262,47 @@ depend on it, and nothing about it is injected into the editor. The server binds
 loopback only and is unauthenticated, because Claude's client cannot be told to
 send a token — any local process can reach it.
 
+### Always on, in every terminal
+
+The wrapper starts the server for one command and stops it afterwards. To have
+dictation simply be there — in terminals that are already open, and after a
+reboot — run the server as a systemd user service and export the variable from
+your shell profile instead.
+
+`~/.config/systemd/user/rtl-caret-voice.service`:
+
+```ini
+[Unit]
+Description=rtl-caret Hebrew dictation server for Claude Code
+After=default.target
+
+[Service]
+Type=simple
+# Absolute interpreter path: the service starts before any shell runs, so
+# nvm/fnm shims are not on PATH yet. Update this after a node upgrade.
+ExecStart=/path/to/node /path/to/rtl-caret/bin/rtl-caret.js voice serve
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+```
+
+```sh
+systemctl --user enable --now rtl-caret-voice.service
+echo 'export VOICE_STREAM_BASE_URL=ws://127.0.0.1:8766' >> ~/.bashrc
+```
+
+Pin the same port in `voice.json` so the service and the variable agree, and
+pick one the VS Code extension does not already own — it keeps its own
+`voice_stream` server on 8765 whether or not its dictation is switched off, so
+8766 is the safer default when both are installed. `voice status` names whatever
+is listening, which is how you tell the two apart.
+
+Already-open terminals keep the environment they started with; export the
+variable by hand there once, or just run `rtl-caret voice -- claude`, which
+overrides it for that command either way.
+
 ## Scope
 
 Fixes caret placement. It does not change arrow-key direction: `Right` still
