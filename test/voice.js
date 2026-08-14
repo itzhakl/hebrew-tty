@@ -575,7 +575,25 @@ async function testHealthAndAdoption() {
   eq(second.server, null, 'nothing new was bound');
 
   eq(await server.isOurServer(first.port + 1), false, 'an empty port is not ours');
+  eq((await server.probe(first.port)).kind, 'ours', 'our own server probes as ours');
+  eq((await server.probe(first.port + 1)).kind, 'none', 'an empty port probes as none');
   await first.server.close();
+
+  /* The VS Code extension runs the same protocol on the same default port.
+   * Calling that "no server" sends the user hunting for a dead socket that is
+   * alive and serving the CLI perfectly well. */
+  const http = require('http');
+  const foreign = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ app: 'claude-code-voice', protocol: 'voice_stream', provider: 'hybrid', pid: 1234 }));
+  });
+  await new Promise((r) => foreign.listen(0, '127.0.0.1', r));
+  const foreignPort = foreign.address().port;
+  const probed = await server.probe(foreignPort);
+  eq(probed.kind, 'foreign', "another app's voice_stream server is reported, not hidden");
+  eq(probed.health.app, 'claude-code-voice', 'its identity is carried back');
+  eq(await server.isOurServer(foreignPort), false, 'but it is never adopted as ours');
+  await new Promise((r) => foreign.close(r));
 }
 
 // ---------- run ----------
