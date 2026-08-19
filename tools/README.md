@@ -12,9 +12,13 @@ what the renderer actually produced rather than hand-written guesses.
 | `probe2.py` | a long sentence that wraps, with column indices per row       |
 | `probe3.py` | punctuation and spaces typed one character at a time          |
 | `probe4.py` | mixed Hebrew/English, recording the typed text alongside each frame |
+| `probe7.py` | tmux split side by side, so one row carries two panes and the rule between them |
 
 `probe4.py` writes `mixed.json`; copy it to
 `test/fixtures/typing-samples.json` to refresh the ground-truth fixture.
+`probe7.py` writes `tmux-split.json` the same way, for
+`test/fixtures/tmux-split.json`. It needs `tmux` on PATH and starts two real
+sessions, one per pane.
 
 Each run starts a real Claude Code session and dismisses the trust prompt. No
 message is ever submitted.

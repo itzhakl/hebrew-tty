@@ -186,7 +186,7 @@ function applyTo(file, { align = false, mirror = true, copy = true } = {}) {
       const [, joined, row, x, term, bg, line, cell] = r;
       const rewritten =
         `${joined}=this._characterJoinerService.getJoinedCharacters(${row}),` +
-        `globalThis.__rtlRow(${line},${term}.cols,${row}-${term}.buffer.ydisp),` +
+        `globalThis.__rtlRow(${line},${term},${row}-${term}.buffer.ydisp),` +
         `${x}=0;${x}<${term}.cols;${x}++){` +
         `if(${bg}=this._cellColorResolver.result.bg,` +
         `${line}.loadCell(globalThis.__rtlSrc(${x},${term}.cols),${cell}),` +

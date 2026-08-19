@@ -303,5 +303,117 @@ console.log('\ncopy: a painted row must come back as the text it stands for');
   console.log('  non-RTL lines untouched');
 }
 
+/* A vertical split means one buffer row carries both panes and the rule
+ * between them. Recorded by tools/probe7.py from tmux running two real Claude
+ * sessions side by side. */
+{
+  console.log('\nsplit panes: a row that holds two panes must be cut at the divider');
+  const split = require('./fixtures/tmux-split.json');
+  const rows = split.lines;
+  const width = split.cols;
+
+  const dividers = M.dividersFromRows(rows, width);
+  checks++;
+  if (dividers.length !== 1 || dividers[0] !== 100) {
+    fail(`divider columns ${JSON.stringify(dividers)}, expected [100]`);
+  }
+
+  // A table border is a rule too, but it does not run the height of the
+  // screen. Only a divider does, which is the whole basis for telling them
+  // apart, so a short one must not be picked up.
+  const shortRule = rows.map((line, y) =>
+    y < 8 ? line : line.slice(0, 100) + ' ' + line.slice(101));
+  checks++;
+  if (M.dividersFromRows(shortRule, width).length !== 0) {
+    fail('a rule on a few rows was taken for a pane divider');
+  }
+
+  const mixed = rows.find((line) => /[֐-׿]/.test(line.slice(0, 100)) &&
+                                    /[֐-׿]/.test(line.slice(101)));
+  checks++;
+  if (!mixed) fail('the recording holds no row with Hebrew in both panes');
+
+  if (mixed) {
+    const segs = M.segmentsOf(dividers, width);
+    const term = {
+      cols: width,
+      rows: rows.length,
+      buffer: {
+        ydisp: 0,
+        active: {
+          baseY: 0,
+          cursorY: rows.indexOf(mixed),
+          viewportY: 0,
+          getLine: (y) => (rows[y] === undefined ? null : {
+            translateToString: (trim) => (trim ? rows[y].replace(/\s+$/, '') : rows[y])
+          })
+        }
+      }
+    };
+
+    // The caret of the left pane must be placed by the left pane's text. Before
+    // the row was cut, the span ran across the divider and the arithmetic came
+    // from the other pane.
+    const left = segs[0];
+    for (let c = 2; c < 26; c++) {
+      checks++;
+      const got = M.mapCaret(term, c);
+      if (got < left.a || got > left.b) {
+        fail(`caret at column ${c} of the left pane mapped to ${got}, outside [${left.a},${left.b}]`);
+      }
+    }
+
+    // Alignment flushes each pane to its own right edge, and never writes a
+    // column belonging to the other pane or to the divider itself.
+    M.rowShift({ translateToString: () => mixed }, term, width, term.buffer.active.cursorY);
+    for (const seg of segs) {
+      const body = mixed.slice(seg.a, seg.b + 1);
+      let end = body.length - 1;
+      while (end >= 0 && /\s/.test(body[end])) end--;
+      const shift = M.computeShift(body, seg.b - seg.a + 1);
+      checks++;
+      if (!(shift > 0)) {
+        fail(`pane at ${seg.a}: shift ${shift}, expected > 0`);
+      } else if (end + shift !== seg.b - seg.a) {
+        fail(`pane at ${seg.a}: last glyph lands at ${end + shift}, not ${seg.b - seg.a}`);
+      }
+    }
+    // The renderer is handed the core buffer, which has no getLine at all.
+    // Reading it through the wrong API would silently switch the split off.
+    M.forgetDividers();
+    const coreTerm = {
+      cols: width,
+      rows: rows.length,
+      buffer: {
+        ydisp: 0,
+        lines: {
+          get: (y) => (rows[y] === undefined ? null : {
+            translateToString: (trim) => (trim ? rows[y].replace(/\s+$/, '') : rows[y])
+          })
+        }
+      }
+    };
+    checks++;
+    if (M.rowShift({ translateToString: () => mixed }, coreTerm, width, 34) !== 75) {
+      fail('the core buffer shape did not resolve the divider');
+    }
+    M.forgetDividers();
+    M.rowShift({ translateToString: () => mixed }, term, width, term.buffer.active.cursorY);
+
+    checks++;
+    if (M.sourceColumn(100, width) !== 100) fail('the divider column was moved');
+    for (const seg of segs) {
+      for (let x = seg.a; x <= seg.b; x++) {
+        const src = M.sourceColumn(x, width);
+        checks++;
+        if (src < seg.a || src > seg.b) {
+          fail(`column ${x} of the pane at ${seg.a} read from ${src}, outside its own pane`);
+        }
+      }
+    }
+    console.log(`  divider at ${dividers[0]}, panes ${JSON.stringify(segs.map((s) => [s.a, s.b]))}`);
+  }
+}
+
 console.log(`\n${failures ? `${failures} FAILURES` : 'all checks pass'}  (${checks} checks)`);
 process.exit(failures ? 1 : 0);

@@ -41,6 +41,12 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
 - Caret mapping and row alignment must read the same per-row resolution. Two
   independent resolutions make the row flicker between alignments while typing.
 - Lines with no RTL character are left untouched.
+- A buffer row is not a line. A multiplexer splitting the screen side by side
+  draws a rule down one column, and the row then holds two unrelated lines. The
+  divider columns are found once per viewport - a rule running nearly the full
+  height, which a table border never does - and span, recovery and alignment
+  all run inside one pane. Alignment flushes to the pane's right edge, never
+  the screen's.
 - `src/patch.js` matches the bundle with regex anchors. Editor upgrades replace
   the bundle, so a failed match means "skip", never a corrupt write. Writes are
   atomic and always leave a backup.
