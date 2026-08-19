@@ -216,19 +216,24 @@
       var buf = term.buffer.active;
       var line = buf.getLine(buf.baseY + buf.cursorY);
       if (!line) return c;
-      var s = line.translateToString(true);
-      if (!RTL.test(s)) return c;
-      diag = { kind: 'caret', row: buf.cursorY, text: s, caret: c, recovered: null };
+      var row = line.translateToString(true);
+      if (!RTL.test(row)) return c;
+      var cols = typeof term.cols === 'number' ? term.cols : row.length;
+      var seg = segmentFor(term, cols, c);
+      var base = seg.a;
+      var s = row.slice(seg.a, seg.b + 1);
+      var cl = c - base;
+      diag = { kind: 'caret', row: buf.cursorY, text: s, caret: cl, recovered: null };
 
       var sp = spanOf(s), a = sp.a, e = sp.e;
-      if (e < a || c < a) return c;
+      if (e < a || cl < a) return c;
 
-      var rec = recover(s.slice(a, e + 1), buf.cursorY);
+      var rec = recover(s.slice(a, e + 1), buf.cursorY + ':' + base);
       if (!rec) return c;
       diag.recovered = rec.text;
 
       var n = rec.order.length;
-      var d = c - a;
+      var d = cl - a;
 
       if (d >= n) {
         // Past the last painted glyph, because the renderer trimmed a trailing
@@ -240,7 +245,7 @@
         var anchor = lastVisual + (isRtlAt(rec.levels, last) ? 0 : 1);
         var step = baseIsRtl(rec.levels) ? -1 : 1;
         var pos = anchor + step * (d - n);
-        return a + (pos < 0 ? 0 : pos);
+        return base + a + (pos < 0 ? 0 : pos);
       }
 
       // A caret sits between characters and a line cursor draws on the left
@@ -253,8 +258,8 @@
       var v = rec.order.indexOf(j);
       if (v < 0) return c;
       var rtl = isRtlAt(rec.levels, j);
-      if (d === 0) return a + v + (rtl ? 1 : 0);
-      return a + v + (rtl ? 0 : 1);
+      if (d === 0) return base + a + v + (rtl ? 1 : 0);
+      return base + a + v + (rtl ? 0 : 1);
     } catch (err) {
       return c;
     }
@@ -269,10 +274,125 @@
   // outside this range and must not be mistaken for a frame.
   var LAYOUT = /[─-▟⠀-⣿]/;
 
+  /* ---- panes: one buffer row can carry more than one line -------------- */
+
+  /* A multiplexer that splits the screen side by side draws a rule down one
+   * column, and from the buffer's point of view every row then holds two
+   * unrelated lines joined by it. Span, recovery and alignment are all per
+   * line, so the row has to be cut at that column before any of them run -
+   * otherwise the caret in the left pane is placed by the arithmetic of the
+   * text in the right one.
+   *
+   * A divider is told apart from a table border by height: it runs the whole
+   * viewport, a table does not. The plain '|' is deliberately not a candidate,
+   * because ordinary text is full of it. */
+  var VRULE = /[\u2502\u2503\u2506\u2507\u250a\u250b\u2551]/;
+  var DIVIDER_MIN_ROWS = 8;
+  var DIVIDER_RATIO = 0.9;
+  var DIVIDER_TTL = 250;
+  var dividerList = null;
+  var dividerCols = -1;
+  var dividerAt = 0;
+
+  function bufferOf(term) {
+    var b = term && term.buffer;
+    return b ? (b.active || b) : null;
+  }
+
+  /* The renderer holds the core buffer, which reads its rows through
+   * lines.get; the object the caret hook is handed is the public one, which
+   * has getLine. Both are the same viewport. */
+  function lineAt(buf, y) {
+    if (buf.getLine) return buf.getLine(y);
+    return buf.lines && buf.lines.get ? buf.lines.get(y) : null;
+  }
+
+  function viewTop(term) {
+    var b = term && term.buffer;
+    if (!b) return 0;
+    if (typeof b.ydisp === 'number') return b.ydisp;
+    var a = b.active;
+    return a && typeof a.viewportY === 'number' ? a.viewportY : 0;
+  }
+
+  function dividersFromRows(rows, cols) {
+    if (!rows || rows.length < DIVIDER_MIN_ROWS) return [];
+    var counts = [], x, y, s;
+    for (y = 0; y < rows.length; y++) {
+      s = rows[y];
+      if (!s) continue;
+      for (x = 0; x < cols && x < s.length; x++) {
+        if (VRULE.test(s.charAt(x))) counts[x] = (counts[x] || 0) + 1;
+      }
+    }
+    var need = rows.length * DIVIDER_RATIO, out = [];
+    for (x = 0; x < cols; x++) if (counts[x] >= need) out.push(x);
+    return out;
+  }
+
+  function scanDividers(term, cols) {
+    var buf = bufferOf(term), rows = term && term.rows;
+    if (!buf || !rows) return [];
+    var top = viewTop(term), lines = [], y, line;
+    for (y = 0; y < rows; y++) {
+      line = lineAt(buf, top + y);
+      lines.push(line ? line.translateToString(false) : '');
+    }
+    return dividersFromRows(lines, cols);
+  }
+
+  /* The scan is over the whole viewport, so it is memoised. A divider only
+   * appears or moves when a pane is split, closed or resized, and a quarter of
+   * a second of lag on that is invisible - while rescanning per row would be a
+   * full screen read for every row of every frame. */
+  function dividersFor(term, cols) {
+    if (!term || typeof term !== 'object') return [];
+    var now = Date.now();
+    if (dividerList && dividerCols === cols && now - dividerAt < DIVIDER_TTL) {
+      return dividerList;
+    }
+    try {
+      dividerList = scanDividers(term, cols);
+    } catch (err) {
+      dividerList = [];
+    }
+    dividerCols = cols;
+    dividerAt = now;
+    return dividerList;
+  }
+
+  /* The stretches between the dividers, in painted columns. Without a divider
+   * this is the whole row, which is the shape every caller had before. */
+  function segmentsOf(dividers, cols) {
+    var out = [], a = 0, i;
+    for (i = 0; i < dividers.length; i++) {
+      if (dividers[i] > a) out.push({ a: a, b: dividers[i] - 1 });
+      a = dividers[i] + 1;
+    }
+    if (a <= cols - 1) out.push({ a: a, b: cols - 1 });
+    return out;
+  }
+
+  function segmentAt(segs, x) {
+    for (var i = 0; i < segs.length; i++) {
+      if (x >= segs[i].a && x <= segs[i].b) return segs[i];
+    }
+    return null;
+  }
+
+  /* The one resolution the caret, the shift and the row all read. Resolving
+   * the pane twice would let them disagree, which is the same class of bug as
+   * resolving the base direction twice. */
+  function segmentFor(term, cols, x) {
+    var segs = segmentsOf(dividersFor(term, cols), cols);
+    return segmentAt(segs, x) || { a: 0, b: cols - 1 };
+  }
+
   var shiftCache = Object.create(null);
   var shiftCacheKeys = [];
   var SHIFT_CACHE_MAX = 400;
   var currentShift = 0;
+  var currentSegs = null;
 
   /* The base direction must come from the same resolution the caret uses.
    * Resolving it independently re-opens the ambiguity, and the row then
@@ -296,26 +416,39 @@
     return shift;
   }
 
-  function rowShift(line, cols, rowKey) {
+  /* Every stretch between the dividers is aligned on its own, against its own
+   * right edge. A pane is not the screen, and flushing to the screen edge
+   * pushes the text of one pane into the next one. */
+  function rowShift(line, term, cols, rowKey) {
     currentShift = 0;
+    currentSegs = null;
     try {
       if (!line) return 0;
-      var text = line.translateToString(true);
-      var key = rowKey + '|' + cols + '|' + text;
-      var hit = shiftCache[key];
-      if (hit === undefined) {
-        hit = computeShift(text, cols, rowKey);
-        shiftCache[key] = hit;
-        shiftCacheKeys.push(key);
-        if (shiftCacheKeys.length > SHIFT_CACHE_MAX) {
-          delete shiftCache[shiftCacheKeys.shift()];
+      var row = line.translateToString(false);
+      var segs = segmentsOf(dividersFor(term, cols), cols);
+      var out = [], i, seg, text, width, key, hit;
+      for (i = 0; i < segs.length; i++) {
+        seg = segs[i];
+        width = seg.b - seg.a + 1;
+        text = row.slice(seg.a, seg.b + 1);
+        key = rowKey + '|' + seg.a + '|' + width + '|' + text;
+        hit = shiftCache[key];
+        if (hit === undefined) {
+          hit = computeShift(text, width, rowKey + ':' + seg.a);
+          shiftCache[key] = hit;
+          shiftCacheKeys.push(key);
+          if (shiftCacheKeys.length > SHIFT_CACHE_MAX) {
+            delete shiftCache[shiftCacheKeys.shift()];
+          }
         }
+        if (RTL.test(text)) {
+          record({ kind: 'row', row: rowKey, text: text, caret: -1, cols: width, shift: hit });
+        }
+        out.push({ a: seg.a, b: seg.b, shift: hit });
       }
-      if (RTL.test(text)) {
-        record({ kind: 'row', row: rowKey, text: text, caret: -1, cols: cols, shift: hit });
-      }
-      currentShift = hit;
-      return hit;
+      currentSegs = out;
+      currentShift = out.length ? out[0].shift : 0;
+      return currentShift;
     } catch (err) {
       return 0;
     }
@@ -327,6 +460,15 @@
    * line, which is blank precisely because the content was short enough to
    * shift in the first place. */
   function sourceColumn(x, cols) {
+    if (currentSegs) {
+      for (var i = 0; i < currentSegs.length; i++) {
+        var seg = currentSegs[i];
+        if (x < seg.a || x > seg.b) continue;
+        if (!seg.shift) return x;
+        return x < seg.a + seg.shift ? seg.b : x - seg.shift;
+      }
+      return x;
+    }
     if (!currentShift) return x;
     return x < currentShift ? cols - 1 : x - currentShift;
   }
@@ -440,14 +582,18 @@
   }
 
   /* Row prologue: everything the per-column loop below needs, resolved once. */
-  function rowSetup(line, cols, rowKey) {
+  function rowSetup(line, term, rowKey) {
     currentShift = 0;
+    currentSegs = null;
     currentMirrors = null;
     try {
       if (!line) return 0;
+      var cols = term && typeof term.cols === 'number' ? term.cols : term;
       var text = line.translateToString(true);
+      // Mirroring needs no pane of its own: it already cuts the row at every
+      // frame character, and a divider is one.
       if (target.__rtlMirrorGlyphs) currentMirrors = rowMirrorCached(text);
-      return target.__rtlAlign ? rowShift(line, cols, rowKey) : 0;
+      return target.__rtlAlign ? rowShift(line, term, cols, rowKey) : 0;
     } catch (err) {
       return 0;
     }
@@ -490,13 +636,16 @@
     return painted.slice(0, a) + logical + painted.slice(e + 1);
   }
 
-  function caretShiftFor(term) {
+  function caretShiftFor(term, c) {
     try {
       var buf = term.buffer.active;
       var line = buf.getLine(buf.baseY + buf.cursorY);
       if (!line) return 0;
-      var text = line.translateToString(true);
-      return computeShift(text, term.cols, buf.cursorY);
+      var row = line.translateToString(false);
+      var cols = typeof term.cols === 'number' ? term.cols : row.length;
+      var seg = segmentFor(term, cols, c);
+      var text = row.slice(seg.a, seg.b + 1);
+      return computeShift(text, seg.b - seg.a + 1, buf.cursorY + ':' + seg.a);
     } catch (err) {
       return 0;
     }
@@ -506,7 +655,7 @@
   target.__rtlCaret = function (term, c) {
     diag = null;
     var mapped = mapCaret(term, c);
-    var shift = target.__rtlAlign ? caretShiftFor(term) : 0;
+    var shift = target.__rtlAlign ? caretShiftFor(term, c) : 0;
     if (diag) {
       diag.mapped = mapped;
       diag.shift = shift;
@@ -536,7 +685,12 @@
       candidates: candidates,
       computeShift: computeShift,
       sourceColumn: sourceColumn,
-      setShift: function (n) { currentShift = n; },
+      setShift: function (n) { currentShift = n; currentSegs = null; },
+      setSegments: function (segs) { currentSegs = segs; },
+      dividersFromRows: dividersFromRows,
+      forgetDividers: function () { dividerList = null; dividerCols = -1; },
+      segmentsOf: segmentsOf,
+      rowShift: rowShift,
       logicalLine: logicalLine,
       rowMirrors: rowMirrors,
       mirrorCell: mirrorCell,

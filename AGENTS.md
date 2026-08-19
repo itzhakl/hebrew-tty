@@ -23,7 +23,7 @@ Zero-dependency at runtime except `bidi-js`, which is inlined into the patch.
 npm test                              # the whole suite
 sudo node bin/rtl-caret.js install    # install from this checkout
 node bin/rtl-caret.js status          # what is patched, changes nothing
-node bin/rtl-caret.js voice -- claude # dictation, needs no install and no root
+node bin/rtl-caret.js voice -- Codex # dictation, needs no install and no root
 ```
 
 Install from the repo checkout, not a globally installed package. `sudo` loses
@@ -36,17 +36,11 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
   written as escapes — literals normalise on the way in.
 - The caret is never moved on a guess. Recovered logical text is reordered again
   and must equal the painted line exactly; otherwise the original column stands.
-- Reordering here skips bidi rule L4, because Claude Code skips it too. Use the
+- Reordering here skips bidi rule L4, because Codex skips it too. Use the
   manual permute, not `getReorderedString`.
 - Caret mapping and row alignment must read the same per-row resolution. Two
   independent resolutions make the row flicker between alignments while typing.
 - Lines with no RTL character are left untouched.
-- A buffer row is not a line. A multiplexer splitting the screen side by side
-  draws a rule down one column, and the row then holds two unrelated lines. The
-  divider columns are found once per viewport - a rule running nearly the full
-  height, which a table border never does - and span, recovery and alignment
-  all run inside one pane. Alignment flushes to the pane's right edge, never
-  the screen's.
 - `src/patch.js` matches the bundle with regex anchors. Editor upgrades replace
   the bundle, so a failed match means "skip", never a corrupt write. Writes are
   atomic and always leave a backup.
@@ -59,10 +53,10 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
 
 ## Voice
 
-- The redirect is one environment variable: Claude Code's CLI builds its
+- The redirect is one environment variable: Codex's CLI builds its
   dictation socket from `VOICE_STREAM_BASE_URL`. Nothing is patched, and the
   CLI's own microphone keeps recording.
-- The wire protocol belongs to Claude, not to us. Binary frames are linear16
+- The wire protocol belongs to Codex, not to us. Binary frames are linear16
   16 kHz mono; replies are `TranscriptInterim` / `TranscriptText` /
   `TranscriptEndpoint` / `TranscriptError`.
 - **Only `TranscriptEndpoint` commits.** The client replaces a single pending
@@ -75,10 +69,10 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
   costs the accurate engine's transcript. Every settle and wait must fit inside
   5000 ms, not 1500.
 - These numbers were read out of the CLI binary's `finalize()`. Re-check them
-  when dictation starts truncating after a Claude Code upgrade.
+  when dictation starts truncating after a Codex upgrade.
 - `src/voice/` must stay out of the `install` path: `require` it lazily, so the
   patch commands never load `ws` or `@google-cloud/speech`.
-- Ported from the `claude-code-hebrew` extension. Fixes belonging to both should
+- Ported from the `Codex-hebrew` extension. Fixes belonging to both should
   land there too.
 
 ## Tests
@@ -87,7 +81,7 @@ Fixtures are recordings from a real pty, never hand-written strings. Do not edit
 `test/fixtures/*.json` by hand — re-record with the `tools/probe*.py` scripts.
 Every new behaviour needs a fixture-backed check in `test/run.js`.
 
-`src/voice/` has no pty recordings — the protocol is Claude's. `test/voice.js`
+`src/voice/` has no pty recordings — the protocol is Codex's. `test/voice.js`
 drives the real server over a real socket with a scripted provider instead.
 
 ## Known limitation
