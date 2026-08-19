@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Record what tmux composes when two panes sit side by side.
+"""Record what a multiplexer composes when two panes sit side by side.
+
+    .venv/bin/python tools/probe7.py [tmux|herdr]
 
 A vertical split means one buffer row carries both panes plus the divider
 column. caret.js works per row, so this is the input it actually sees. The
@@ -24,6 +26,8 @@ LEFT = "שלום עולם מהפאנל השמאלי"
 RIGHT = "וזה הפאנל הימני עם עברית"
 CLAUDE = os.path.expanduser("~/.local/bin/claude")
 SOCKET = "rtlprobe"
+HERDR = os.path.expanduser("~/.local/bin/herdr")
+DRIVER = sys.argv[1] if len(sys.argv) > 1 else "tmux"
 
 
 class Screen(pyte.Screen):
@@ -57,9 +61,15 @@ def main():
     env.pop("CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT", None)
     env.pop("CLAUDE_CODE_NATIVE_CURSOR", None)
 
-    os.system(f"tmux -L {SOCKET} kill-server >/dev/null 2>&1")
-    s = Wide(["tmux", "-L", SOCKET, "-f", "/dev/null", "new-session", "-s", "p",
-              CLAUDE], env)
+    if DRIVER == "tmux":
+        os.system(f"tmux -L {SOCKET} kill-server >/dev/null 2>&1")
+        argv = ["tmux", "-L", SOCKET, "-f", "/dev/null", "new-session", "-s",
+                "p", CLAUDE]
+        split = f"tmux -L {SOCKET} split-window -h -t p '{CLAUDE}'"
+    else:
+        argv = [HERDR, "--session", SOCKET]
+        split = f"{HERDR} pane split --current --direction right"
+    s = Wide(argv, env)
     try:
         s.pump(15)
         s.send("\r")          # dismiss the trust prompt if it is up
@@ -67,8 +77,7 @@ def main():
         s.send(LEFT)
         s.pump(4)
 
-        os.system(
-            f"tmux -L {SOCKET} split-window -h -t p '{CLAUDE}' >/dev/null 2>&1")
+        os.system(f"{split} >/dev/null 2>&1")
         s.pump(15)
         s.send("\r")
         s.pump(6)
@@ -84,7 +93,7 @@ def main():
             "lines": rows,
         }
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            "tmux-split.json")
+                            f"{DRIVER}-split.json")
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(out, fh, ensure_ascii=False, indent=2)
 
@@ -95,7 +104,10 @@ def main():
         print(f"cursor: {s.cursor()}")
     finally:
         s.close()
-        os.system(f"tmux -L {SOCKET} kill-server >/dev/null 2>&1")
+        if DRIVER == "tmux":
+            os.system(f"tmux -L {SOCKET} kill-server >/dev/null 2>&1")
+        else:
+            os.system(f"{HERDR} server stop >/dev/null 2>&1")
 
 
 if __name__ == "__main__":

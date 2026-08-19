@@ -413,6 +413,18 @@ console.log('\ncopy: a painted row must come back as the text it stands for');
     }
     console.log(`  divider at ${dividers[0]}, panes ${JSON.stringify(segs.map((s) => [s.a, s.b]))}`);
   }
+
+  // A second multiplexer, recorded the same way. The rule is found by height,
+  // not by who drew it, so nothing here is specific to tmux.
+  {
+    const herdr = require('./fixtures/herdr-split.json');
+    const found = M.dividersFromRows(herdr.lines, herdr.cols);
+    checks++;
+    if (found.length !== 1 || found[0] !== 25) {
+      fail(`herdr divider columns ${JSON.stringify(found)}, expected [25]`);
+    }
+    console.log(`  herdr divider at ${found[0]}`);
+  }
 }
 
 console.log(`\n${failures ? `${failures} FAILURES` : 'all checks pass'}  (${checks} checks)`);
