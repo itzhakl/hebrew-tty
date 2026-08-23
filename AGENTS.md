@@ -11,7 +11,7 @@ Zero-dependency at runtime except `bidi-js`, which is inlined into the patch.
 | `bin/rtl-caret.js`   | CLI: `status` / `install` / `uninstall` / `voice`, flag parsing |
 | `src/patch.js`       | finds editor bundles, builds the payload, patches/reverts them |
 | `src/caret.js`       | the injected logic: recovery, caret mapping, mirroring, shift  |
-| `src/voice/`         | Hebrew dictation: local `voice_stream` server + Chirp providers |
+| `src/voice/`         | Hebrew dictation: local `voice_stream` server + ElevenLabs Scribe |
 | `test/run.js`        | assertion runner over `test/fixtures/*.json`                   |
 | `test/voice.js`      | assertion runner for `src/voice/`                              |
 | `tools/*.py`         | pty probes that record the fixtures; not shipped runtime code  |
@@ -70,8 +70,20 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
   5000 ms, not 1500.
 - These numbers were read out of the CLI binary's `finalize()`. Re-check them
   when dictation starts truncating after a Codex upgrade.
+- The engine is ElevenLabs Scribe v2 Realtime over one WebSocket:
+  `input_audio_chunk` frames carry base64 PCM up, and `commit_strategy=vad`
+  makes the server endpoint each utterance itself. Without VAD,
+  `committed_transcript` never fires for a microphone.
+- **Only `committed_transcript` ends a segment.** `partial_transcript` and
+  `final_transcript` are both hypotheses - the latter is settled, not
+  committed. Emitting either as a commit sends the same words twice.
+- Audio is batched to ~100 ms before it goes out. One JSON+base64 frame per
+  20 ms CLI frame is 50 messages a second, for latency the model cannot use.
+- ElevenLabs wants a bare ISO-639-1 code, so Hebrew is `he`. A `voice.json`
+  left over from the Google backend carries `iw-IL` and a Chirp model name;
+  both are translated on load rather than sent as-is.
 - `src/voice/` must stay out of the `install` path: `require` it lazily, so the
-  patch commands never load `ws` or `@google-cloud/speech`.
+  patch commands never load `ws`.
 - Ported from the `Codex-hebrew` extension. Fixes belonging to both should
   land there too.
 

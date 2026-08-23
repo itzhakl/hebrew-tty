@@ -11,8 +11,13 @@ const os = require('os');
 const path = require('path');
 
 const { Endpointer } = require('../src/voice/vad');
-const { parseGoogleCredential, mapChirpError, speechEndpoint, ChirpProvider } = require('../src/voice/chirp');
-const { HybridProvider } = require('../src/voice/hybrid');
+const {
+  ElevenLabsProvider,
+  parseElevenLabsCredential,
+  mapElevenLabsError,
+  buildRealtimeUrl,
+  normalizeLanguage
+} = require('../src/voice/elevenlabs');
 const config = require('../src/voice/config');
 const server = require('../src/voice/server');
 const cli = require('../src/voice/cli');
@@ -81,40 +86,37 @@ function testVad() {
 
 // ---------- credentials ----------
 
-const SERVICE_ACCOUNT = JSON.stringify({
-  project_id: 'my-project-1',
-  client_email: 'a@b.iam.gserviceaccount.com',
-  private_key: '-----BEGIN PRIVATE KEY-----x'
-});
-
 function testCredentials() {
-  eq(speechEndpoint('global'), 'speech.googleapis.com', 'global endpoint');
-  eq(speechEndpoint('eu'), 'eu-speech.googleapis.com', 'regional endpoint');
+  eq(parseElevenLabsCredential(' sk_abc123 '), 'sk_abc123', 'the key is trimmed');
+  throwsWith(() => parseElevenLabsCredential(''), 'No ElevenLabs API key', 'empty credential');
+  // The two things a migration off Google actually leaves in the box.
+  throwsWith(() => parseElevenLabsCredential('AIzaSyExample'), 'Google Cloud API key',
+    'a leftover Google API key is named, not just rejected');
+  throwsWith(() => parseElevenLabsCredential('{"project_id":"x"}'), 'service-account JSON',
+    'a leftover service account is named, not just rejected');
+  throwsWith(() => parseElevenLabsCredential('sk_a sk_b'), 'whitespace', 'a mangled paste is caught');
 
-  const key = parseGoogleCredential('AIzaSyExample', 'my-project-1', 'eu');
-  eq(key.projectId, 'my-project-1', 'api key keeps the configured project');
-  eq(key.clientOptions.apiKey, 'AIzaSyExample', 'api key is passed through');
-  eq(key.clientOptions.apiEndpoint, 'eu-speech.googleapis.com', 'endpoint follows location');
+  eq(normalizeLanguage('iw-IL'), 'he', 'the tag the Google config carried still means Hebrew');
+  eq(normalizeLanguage('he'), 'he', 'a bare code passes through');
+  eq(normalizeLanguage('ar-SA'), 'ar', 'the region is dropped');
+  eq(normalizeLanguage(''), '', 'no language is not a language');
 
-  // The JSON's own project wins: a stale configured id must not redirect a
-  // valid service account at a foreign project.
-  const sa = parseGoogleCredential(SERVICE_ACCOUNT, 'other-project', 'us');
-  eq(sa.projectId, 'my-project-1', 'service-account project_id wins');
-  ok(sa.clientOptions.credentials !== undefined, 'service account passes credentials');
+  const url = new URL(buildRealtimeUrl({ languageCode: 'iw-IL' }));
+  eq(url.host, 'api.elevenlabs.io', 'the default host');
+  eq(url.pathname, '/v1/speech-to-text/realtime', 'the realtime path');
+  eq(url.searchParams.get('model_id'), 'scribe_v2_realtime', 'the default model');
+  eq(url.searchParams.get('audio_format'), 'pcm_16000', 'declares linear16 at 16 kHz');
+  eq(url.searchParams.get('language_code'), 'he', 'the language is normalized into the URL');
+  // Without server-side endpointing, committed_transcript never fires for a
+  // microphone and the whole utterance would ride on our own flush.
+  eq(url.searchParams.get('commit_strategy'), 'vad', 'server-side endpointing is on');
 
-  throwsWith(() => parseGoogleCredential('', undefined, 'eu'), 'No Google Cloud credential', 'empty credential');
-  throwsWith(() => parseGoogleCredential('AIza', undefined, 'eu'), 'needs a project ID', 'api key without project');
-  throwsWith(() => parseGoogleCredential('AIza', 'AIzaSyNotAProject', 'eu'), 'not a valid Google Cloud project ID',
-    'api key pasted into the project box');
-  throwsWith(() => parseGoogleCredential('{oops', undefined, 'eu'), 'not valid', 'broken JSON');
-  throwsWith(() => parseGoogleCredential('{"project_id":"my-project-1"}', undefined, 'eu'),
-    'client_email', 'JSON missing the key material');
-
-  eq(mapChirpError({ code: 7, message: 'denied on recognizer' }).hint, 'set-api-key', 'permission denied hint');
-  eq(mapChirpError({ code: 8, message: 'quota' }).hint, 'quota', 'quota hint');
-  eq(mapChirpError({ code: 14, message: 'unavailable' }).hint, 'network', 'network hint');
-  eq(mapChirpError({ message: 'something else' }).hint, undefined, 'unknown errors carry no hint');
-  ok(mapChirpError({ code: 7, message: 'denied on recognizer' }).message.includes('denied on recognizer'),
+  eq(mapElevenLabsError({ message_type: 'auth_error', error: 'bad key' }).hint, 'set-api-key', 'auth hint');
+  eq(mapElevenLabsError({ message_type: 'quota_exceeded', error: 'no credits' }).hint, 'quota', 'quota hint');
+  eq(mapElevenLabsError(new Error('getaddrinfo ENOTFOUND api.elevenlabs.io')).hint, 'network', 'network hint');
+  eq(mapElevenLabsError({ message_type: 'transcriber_error', error: 'something else' }).hint, undefined,
+    'unknown errors carry no hint');
+  ok(mapElevenLabsError({ message_type: 'auth_error', error: 'bad key' }).message.includes('bad key'),
     'the raw server text survives');
 }
 
@@ -126,30 +128,34 @@ function testConfig() {
 
   const empty = config.load({}, {}, file);
   eq(empty.port, 8765, 'default port');
-  eq(empty.language, 'iw-IL', 'Hebrew is the default language');
-  eq(empty.provider, 'hybrid', 'hybrid is the default provider');
+  eq(empty.language, 'he', 'Hebrew is the default language');
+  eq(empty.provider, 'elevenlabs', 'elevenlabs is the default provider');
+  eq(empty.model, 'scribe_v2_realtime', 'the realtime Scribe model is the default');
 
-  config.save({ credential: 'AIzaSaved', projectId: 'my-project-1', port: 9000 }, file);
+  config.save({ credential: 'sk_saved', port: 9000 }, file);
   eq(fs.statSync(file).mode & 0o777, 0o600, 'config file is 0600');
   const saved = config.load({}, {}, file);
   eq(saved.port, 9000, 'file overrides the default');
-  eq(saved.credential, 'AIzaSaved', 'credential read back from the file');
-  eq(saved.language, 'iw-IL', 'unsaved keys keep their defaults');
+  eq(saved.credential, 'sk_saved', 'credential read back from the file');
+  eq(saved.language, 'he', 'unsaved keys keep their defaults');
 
-  const env = config.load({}, { RTL_VOICE_PORT: '9100', GOOGLE_STT_CREDENTIAL: 'AIzaEnv' }, file);
+  const env = config.load({}, { RTL_VOICE_PORT: '9100', ELEVENLABS_API_KEY: 'sk_env' }, file);
   eq(env.port, 9100, 'environment overrides the file');
-  eq(env.credential, 'AIzaEnv', 'inline env credential wins over the file');
-
-  const keyFile = path.join(dir, 'sa.json');
-  fs.writeFileSync(keyFile, `${SERVICE_ACCOUNT}\n`);
-  const viaFile = config.load({}, { GOOGLE_APPLICATION_CREDENTIALS: keyFile }, file);
-  eq(viaFile.credential, SERVICE_ACCOUNT, 'credential read from GOOGLE_APPLICATION_CREDENTIALS');
+  eq(env.credential, 'sk_env', 'inline env credential wins over the file');
+  eq(config.load({}, { XI_API_KEY: 'sk_xi' }, file).credential, 'sk_xi', "ElevenLabs' own variable is honoured");
 
   const flags = config.load({ port: 9200, language: 'ar-SA' }, { RTL_VOICE_PORT: '9100' }, file);
   eq(flags.port, 9200, 'explicit flags override the environment');
   eq(flags.language, 'ar-SA', 'language flag applies');
 
-  eq(config.load({ provider: 'nonsense' }, {}, file).provider, 'hybrid', 'unknown provider falls back');
+  eq(config.load({ provider: 'nonsense' }, {}, file).provider, 'elevenlabs', 'unknown provider falls back');
+
+  // A voice.json left over from the Google backend must not send "long" as a
+  // Scribe model_id, nor keep selecting an engine that is gone.
+  config.save({ provider: 'hybrid', model: 'long', location: 'eu' }, file);
+  const migrated = config.load({}, {}, file);
+  eq(migrated.provider, 'elevenlabs', 'the retired provider is replaced');
+  eq(migrated.model, 'scribe_v2_realtime', 'the retired model is replaced');
 
   fs.writeFileSync(file, '{not json');
   throwsWith(() => config.load({}, {}, file), 'not valid JSON', 'corrupt config is reported, not swallowed');
@@ -162,6 +168,9 @@ function testCliParse() {
   const run = cli.parse(['--port', '9000', '--', 'claude', '--continue']);
   eq(run.overrides.port, 9000, 'port flag parsed');
   eq(run.command.join(' '), 'claude --continue', 'everything after -- is the command');
+
+  const model = cli.parse(['serve', '--model', 'scribe_v2_realtime']);
+  eq(model.overrides.model, 'scribe_v2_realtime', 'model flag parsed');
 
   const serve = cli.parse(['serve', '--verbose']);
   eq(serve.sub, 'serve', 'subcommand parsed');
@@ -177,144 +186,135 @@ function testCliParse() {
 // ---------- provider selection ----------
 
 function testProviderSelection() {
-  const base = config.load({ credential: 'AIzaX', projectId: 'my-project-1' }, {}, '/nonexistent');
-  eq(cli.buildProvider(Object.assign({}, base, { provider: 'chirp' })).id, 'chirp', 'chirp selected');
-  eq(cli.buildProvider(Object.assign({}, base, { provider: 'hybrid' })).id, 'hybrid', 'hybrid selected');
+  const base = config.load({ credential: 'sk_test' }, {}, '/nonexistent');
+  eq(cli.buildProvider(base).id, 'elevenlabs', 'the elevenlabs provider is built');
   throwsWith(() => cli.buildProvider(Object.assign({}, base, { credential: '' })),
-    'No Google Cloud credential', 'a missing credential fails before the mic opens');
+    'No ElevenLabs API key', 'a missing credential fails before the mic opens');
+  throwsWith(() => cli.buildProvider(Object.assign({}, base, { credential: 'AIzaSyOld' })),
+    'not an ElevenLabs API key', 'a leftover Google key fails before the mic opens');
 }
 
 // ---------- fake engines ----------
 
-/* Stands in for the gRPC duplex stream, so the provider and the socket can be
- * driven without Google. */
-function fakeStream() {
+/* Stands in for the realtime WebSocket, so the provider and the socket can be
+ * driven without ElevenLabs. */
+function fakeSocket() {
   const listeners = {};
   return {
-    writes: [],
-    ended: false,
+    sent: [],
+    closed: false,
     on(event, fn) {
       (listeners[event] = listeners[event] || []).push(fn);
       return this;
     },
-    write(req) {
-      this.writes.push(req);
-      return true;
+    send(text) {
+      this.sent.push(JSON.parse(text));
     },
-    end() {
-      this.ended = true;
-      for (const fn of listeners.end || []) fn();
+    close() {
+      this.closed = true;
+      this.emit('close');
     },
     emit(event, arg) {
       for (const fn of listeners[event] || []) fn(arg);
+    },
+    reply(obj) {
+      this.emit('message', Buffer.from(JSON.stringify(obj)));
     }
   };
 }
 
-function chirpWith(stream, opts) {
-  return new ChirpProvider(
-    Object.assign({ credential: 'AIzaX', projectId: 'my-project-1', location: 'eu', model: 'long', languageCode: 'iw-IL' }, opts),
-    async () => ({ stream, close: async () => {} })
+/* chunkMs 20 makes one CLI frame a full chunk, so batching does not have to be
+ * spelled out in every assertion below. */
+function elevenWith(socket, opts) {
+  return new ElevenLabsProvider(
+    Object.assign({ credential: 'sk_test', languageCode: 'iw-IL', chunkMs: 20 }, opts),
+    async () => socket
   );
 }
 
-function result(transcript, isFinal) {
-  return { results: [{ alternatives: [{ transcript }], isFinal }] };
-}
-
-async function testChirpSession() {
-  const stream = fakeStream();
+async function testElevenLabsSession() {
+  const socket = fakeSocket();
   const interims = [];
   const finals = [];
-  const provider = chirpWith(stream);
-  const session = await provider.createSession({
+  const session = await elevenWith(socket).createSession({
     onInterim: (t) => interims.push(t),
     onFinal: (t) => finals.push(t),
     onError: (e) => finals.push(`ERR ${e.message}`)
   });
 
-  const cfg = stream.writes[0].streamingConfig.config;
-  eq(cfg.explicitDecodingConfig.sampleRateHertz, 16000, 'declares the CLI sample rate');
-  eq(cfg.explicitDecodingConfig.encoding, 'LINEAR16', 'declares linear16');
-  eq(cfg.languageCodes[0], 'iw-IL', 'sends the configured language');
-  eq(stream.writes[0].recognizer, 'projects/my-project-1/locations/eu/recognizers/_', 'recognizer path');
+  socket.reply({ message_type: 'session_started', session_id: 'abc' });
+  eq(interims.length, 0, 'the session handshake is not a transcript');
+  socket.reply({ message_type: 'partial_transcript', text: 'שלום' });
+  eq(interims[0], 'שלום', 'a partial surfaces as an interim');
+  // final_transcript is a settled hypothesis, not a commit. Treating it as one
+  // as well as committed_transcript would send the same words twice.
+  socket.reply({ message_type: 'final_transcript', text: 'שלום עולם' });
+  eq(interims[1], 'שלום עולם', 'a settled final is still only a hypothesis');
+  eq(finals.length, 0, 'final_transcript does not commit');
+  socket.reply({ message_type: 'committed_transcript', text: 'שלום עולם' });
+  eq(finals[0], 'שלום עולם', 'committed_transcript is the commit');
 
-  stream.emit('data', result('שלום', false));
-  eq(interims[0], 'שלום', 'interim surfaces');
-  stream.emit('data', result('שלום עולם', true));
-  eq(finals[0], 'שלום עולם', 'server-endpointed final is pushed');
+  session.sendAudio(Buffer.alloc(640));
+  eq(socket.sent.length, 1, 'a full chunk is shipped');
+  eq(socket.sent[0].message_type, 'input_audio_chunk', 'audio goes out as input_audio_chunk');
+  eq(socket.sent[0].sample_rate, 16000, 'declares the CLI sample rate');
+  eq(socket.sent[0].commit, false, 'audio alone does not commit');
+  eq(Buffer.from(socket.sent[0].audio_base_64, 'base64').length, 640, 'the audio survives base64');
 
   session.sendAudio(Buffer.alloc(320));
-  eq(stream.writes.length, 2, 'audio is forwarded');
+  eq(socket.sent.length, 1, 'a part chunk is held back');
   session.flush();
-  ok(stream.ended, 'flush half-closes the stream');
-  session.sendAudio(Buffer.alloc(320));
-  eq(stream.writes.length, 2, 'no audio is written after flush');
+  eq(socket.sent.length, 2, 'flush ships the tail');
+  eq(socket.sent[1].commit, true, 'flush commits the segment instead of waiting out the silence');
+  eq(Buffer.from(socket.sent[1].audio_base_64, 'base64').length, 320, 'the held audio rides the commit');
+  session.sendAudio(Buffer.alloc(640));
+  eq(socket.sent.length, 2, 'no audio is written after flush');
+
+  socket.reply({ message_type: 'committed_transcript', text: 'הזנב' });
+  eq(finals[1], 'הזנב', 'the flushed tail commits');
   eq(await session.endSegment(), '', 'push mode commits through onFinal, not endSegment');
 
+  // A commit we asked for and never got must not hang the close path.
+  const slow = fakeSocket();
+  const slowSession = await elevenWith(slow, { settleTimeoutMs: 100 }).createSession({
+    onInterim: () => {},
+    onFinal: () => {},
+    onError: () => {}
+  });
+  slowSession.sendAudio(Buffer.alloc(640));
+  slowSession.flush();
+  const waited = Date.now();
+  eq(await slowSession.endSegment(), '', 'an unanswered commit falls through');
+  ok(Date.now() - waited >= 90, 'endSegment waits for the commit it asked for');
+
   // An engine that dies must not throw once per remaining audio frame.
-  const dying = fakeStream();
+  const dying = fakeSocket();
   const errors = [];
-  const dyingSession = await chirpWith(dying).createSession({
+  const dyingSession = await elevenWith(dying).createSession({
     onInterim: () => {},
     onFinal: () => {},
     onError: (e) => errors.push(e)
   });
-  dying.emit('error', { code: 8, message: 'quota' });
+  dying.reply({ message_type: 'quota_exceeded', error: 'out of credits' });
   eq(errors.length, 1, 'the error is reported once');
   eq(errors[0].hint, 'quota', 'the error is mapped');
-  dyingSession.sendAudio(Buffer.alloc(320));
-  dyingSession.sendAudio(Buffer.alloc(320));
-  eq(dying.writes.length, 1, 'a dead stream takes no further audio');
-}
+  dyingSession.sendAudio(Buffer.alloc(640));
+  dyingSession.sendAudio(Buffer.alloc(640));
+  eq(dying.sent.length, 0, 'a dead socket takes no further audio');
 
-async function testHybridSession() {
-  const fastStream = fakeStream();
-  const accurateStream = fakeStream();
-  const provider = new HybridProvider(chirpWith(fastStream), chirpWith(accurateStream, { location: 'us', model: 'chirp_3' }));
-  const interims = [];
-  const session = await provider.createSession({ onInterim: (t) => interims.push(t), onError: () => {} });
-
-  fastStream.emit('data', result('שלום', false));
-  eq(interims[interims.length - 1], 'שלום', 'fast interim is displayed');
-  fastStream.emit('data', result('שלום עולם', true));
-  eq(interims[interims.length - 1], 'שלום עולם', 'fast final is demoted to display');
-  eq(await session.endSegment(), '', 'nothing commits mid-recording');
-
-  session.flush();
-  accurateStream.emit('data', result('שלום עולם מדויק', true));
-  accurateStream.emit('end');
-  eq(await session.endSegment(), 'שלום עולם מדויק', 'the accurate engine owns the commit');
-
-  // The accurate engine failing must not lose the user's dictation.
-  const f2 = fakeStream();
-  const a2 = fakeStream();
-  const s2 = await new HybridProvider(chirpWith(f2), chirpWith(a2)).createSession({ onInterim: () => {}, onError: () => {} });
-  f2.emit('data', result('גיבוי', true));
-  s2.flush();
-  a2.emit('error', { code: 14, message: 'unavailable' });
-  eq(await s2.endSegment(), 'גיבוי', 'falls back to the fast transcript');
-
-  // An accurate engine that dies mid-sentence has heard only part of it. Its
-  // words are better and yet fewer, so committing them drops the tail.
-  const f3 = fakeStream();
-  const a3 = fakeStream();
-  const s3 = await new HybridProvider(chirpWith(f3), chirpWith(a3)).createSession({ onInterim: () => {}, onError: () => {} });
-  a3.emit('data', result('החצי הראשון', true));
-  a3.emit('end');
-  f3.emit('data', result('החצי הראשון והחצי השני', true));
-  s3.flush();
-  eq(await s3.endSegment(), 'החצי הראשון והחצי השני', 'a partial accurate transcript loses to the complete fast one');
-
-  // But an engine that ends because we flushed it is the one we want.
-  const f4 = fakeStream();
-  const a4 = fakeStream();
-  const s4 = await new HybridProvider(chirpWith(f4), chirpWith(a4)).createSession({ onInterim: () => {}, onError: () => {} });
-  f4.emit('data', result('גרסה מהירה', true));
-  s4.flush();
-  a4.emit('data', result('גרסה מדויקת', true));
-  a4.emit('end');
-  eq(await s4.endSegment(), 'גרסה מדויקת', 'a post-flush final still wins');
+  // A throttled commit is answered by the server's own VAD a moment later.
+  // Painting TranscriptError over live text would lose the transcript.
+  const throttled = fakeSocket();
+  const throttledErrors = [];
+  const throttledSession = await elevenWith(throttled).createSession({
+    onInterim: () => {},
+    onFinal: () => {},
+    onError: (e) => throttledErrors.push(e)
+  });
+  throttled.reply({ message_type: 'commit_throttled', error: 'too soon' });
+  eq(throttledErrors.length, 0, 'a throttled commit is not painted over the transcript');
+  throttledSession.sendAudio(Buffer.alloc(640));
+  eq(throttled.sent.length, 1, 'and the session stays alive');
 }
 
 // ---------- the socket, end to end ----------
@@ -419,9 +419,9 @@ async function testCommitIsAlwaysAPair() {
 }
 
 /* The CLI starts sending audio as soon as the socket is open, but opening a
- * Chirp session costs an OAuth exchange and a gRPC channel on the first mic
- * press. Frames that arrive in that window must be replayed, not dropped -
- * dropping them eats the first words of the utterance. */
+ * provider session costs a TLS handshake and an authenticated upgrade on the
+ * first mic press. Frames that arrive in that window must be replayed, not
+ * dropped - dropping them eats the first words of the utterance. */
 async function testSlowSessionKeepsTheFirstWords() {
   const WebSocket = require('ws');
   const frames = [];
@@ -547,7 +547,7 @@ async function testSocketReportsProviderFailure() {
     provider: {
       id: 'broken',
       createSession: async () => {
-        throw new Error('Google Cloud rejected the credential');
+        throw new Error('ElevenLabs rejected the credential');
       }
     },
     makeEndpointer: () => new Endpointer()
@@ -604,8 +604,7 @@ async function main() {
   testConfig();
   testCliParse();
   testProviderSelection();
-  await testChirpSession();
-  await testHybridSession();
+  await testElevenLabsSession();
   await testSocketRoundTrip();
   await testCommitIsAlwaysAPair();
   await testSlowSessionKeepsTheFirstWords();
