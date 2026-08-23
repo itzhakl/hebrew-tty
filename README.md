@@ -247,6 +247,10 @@ rtl-caret voice setup            # paste your ElevenLabs API key
 rtl-caret voice -- claude        # run Claude with dictation redirected here
 ```
 
+Two engines answer that socket: ElevenLabs Scribe in the cloud (the default),
+and faster-whisper on this machine (`provider: "whisper"`, no key and no
+network — see [Local engine](#local-engine-whisper)).
+
 `voice` starts a WebSocket server on `127.0.0.1`, speaks Claude's `voice_stream`
 protocol (linear16 16 kHz mono in; `TranscriptInterim` / `TranscriptText` /
 `TranscriptEndpoint` / `TranscriptError` out) and transcribes through ElevenLabs
@@ -306,6 +310,57 @@ rtl-caret voice test 5 --keyterm rtl-caret --keyterm קומיט
 
 `rtl-caret voice status` prints the languages and keyterms actually in effect,
 including any keyterm dropped for being too long.
+
+### Local engine (Whisper)
+
+Scribe is a cloud service: it wants a key, a network, and it hears everything
+you dictate. `"provider": "whisper"` swaps it for faster-whisper running here,
+which needs none of the three. What it does need is a GPU worth using and a
+model that takes a few seconds to load.
+
+Install it once — the CUDA libraries come from pip, so nothing system-wide is
+touched:
+
+```sh
+python3 -m venv ~/.local/share/rtl-caret/whisper-venv
+~/.local/share/rtl-caret/whisper-venv/bin/pip install faster-whisper nvidia-cudnn-cu12
+rtl-caret voice status --provider whisper     # names the interpreter it found
+```
+
+Then point `voice.json` at it. The model downloads itself on the first run
+(~1.5 GB into the Hugging Face cache):
+
+```json
+{ "provider": "whisper" }
+```
+
+The default model is [`ivrit-ai/whisper-large-v3-turbo-ct2`][ivrit], a Hebrew
+fine-tune of large-v3-turbo. On an RTX 3050 Ti at `int8_float16` it loads in
+about 5 s, and every transcription after that costs ~470 ms whatever the length
+of the utterance — Whisper pads its window to thirty seconds, so the encoder
+charges the same for one second of speech as for twelve.
+
+[ivrit]: https://huggingface.co/ivrit-ai/whisper-large-v3-turbo-ct2
+
+Whisper is not a streaming model and has no endpointer of its own, so the two
+jobs Scribe does server-side are done here instead. The local energy VAD in
+`vad.js` decides when a sentence ended, and the grey hypothesis you read while
+talking is the utterance-so-far re-transcribed on a timer.
+
+| key (under `whisper`) | default | what it does |
+| --- | --- | --- |
+| `model` | `ivrit-ai/whisper-large-v3-turbo-ct2` | any CTranslate2 Whisper on the Hub or on disk. |
+| `device` | `auto` | `cuda`, `cpu`, or `auto` — resolved by asking CTranslate2 whether a card is really there. A CUDA load that fails falls back to the CPU rather than leaving you with no dictation. |
+| `computeType` | `auto` | `int8_float16` on a card, `int8` on a CPU. `float16` measured slower here, not faster. |
+| `python` | the venv above | an interpreter named here is used as named, even if it is not there — a typo should fail saying so. |
+| `partialMs` | `700` | how often the hypothesis is recomputed. Each one costs a full pass, so under ~250 ms the card only produces text nobody reads. |
+| `partialBeamSize` / `finalBeamSize` | `1` / `5` | hypotheses are greedy at a fixed temperature; the commit gets the beam search and Whisper's temperature fallback. |
+| `minVoicedMs` | `200` | how much speech a buffer must hold before it is decoded at all. Fed silence, Whisper does not return nothing — it invents a plausible sentence. |
+| `cacheDir` | HF default | where models are downloaded to. |
+| `offline` | `false` | refuse to reach the Hub; use only what is already cached. |
+
+`rtl-caret voice status` prints the resolved engine, the interpreter, and the
+endpointing numbers that decide when a sentence is cut.
 
 `ELEVENLABS_API_KEY` / `XI_API_KEY` override the stored credential. Set `"enabled": false` there to turn dictation off without changing
 how you launch Claude — the wrapper then runs the command untouched.
