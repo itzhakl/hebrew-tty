@@ -347,15 +347,33 @@ jobs Scribe does server-side are done here instead. The local energy VAD in
 `vad.js` decides when a sentence ended, and the grey hypothesis you read while
 talking is the utterance-so-far re-transcribed on a timer.
 
+That endpointer measures the room rather than trusting a fixed level. A
+microphone whose own noise sits above the threshold never falls silent, so
+nothing commits until the key is released — which feels like slowness rather
+than like a broken endpointer. Claude streams from the moment the mic opens and
+nobody starts talking inside 300 ms, so the first 300 ms of every press is the
+room; speech has to beat it threefold. `voice serve --verbose` prints the
+measured room and the resulting bar on every commit:
+
+```
+commit (silence): 28 chars, room 0.0155, speech above 0.0464
+```
+
+`endpointMs` is the knob for felt latency: it is how long a pause has to run
+before the sentence is committed, and it is added to the ~470 ms the decode
+costs. Lowering it to 400 makes dictation noticeably snappier at the price of
+splitting sentences at thinking pauses, which costs Whisper the context either
+side of the split.
+
 | key (under `whisper`) | default | what it does |
 | --- | --- | --- |
 | `model` | `ivrit-ai/whisper-large-v3-turbo-ct2` | any CTranslate2 Whisper on the Hub or on disk. |
 | `device` | `auto` | `cuda`, `cpu`, or `auto` — resolved by asking CTranslate2 whether a card is really there. A CUDA load that fails falls back to the CPU rather than leaving you with no dictation. |
 | `computeType` | `auto` | `int8_float16` on a card, `int8` on a CPU. `float16` measured slower here, not faster. |
 | `python` | the venv above | an interpreter named here is used as named, even if it is not there — a typo should fail saying so. |
-| `partialMs` | `700` | how often the hypothesis is recomputed. Each one costs a full pass, so under ~250 ms the card only produces text nobody reads. |
+| `partialMs` | `400` | how often the hypothesis is recomputed. Each one costs a full pass (~470 ms), so the cadence you read is this plus that. Under ~250 ms the card only produces text nobody reads. |
 | `partialBeamSize` / `finalBeamSize` | `1` / `5` | hypotheses are greedy at a fixed temperature; the commit gets the beam search and Whisper's temperature fallback. |
-| `minVoicedMs` | `200` | how much speech a buffer must hold before it is decoded at all. Fed silence, Whisper does not return nothing — it invents a plausible sentence. |
+| `vadFilter` | `true` | Silero in front of the decoder. Fed room noise, Whisper does not return nothing — it invents a sentence, in Hebrew reliably "תודה רבה". Turn it off only if it ever eats quiet speech. |
 | `cacheDir` | HF default | where models are downloaded to. |
 | `offline` | `false` | refuse to reach the Hub; use only what is already cached. |
 
