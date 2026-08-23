@@ -243,27 +243,27 @@ that one variable is enough to replace the transcription engine — the mic, the
 UI and the keybinding stay Claude's:
 
 ```sh
-rtl-caret voice setup            # paste a Google Cloud key or service-account JSON
+rtl-caret voice setup            # paste your ElevenLabs API key
 rtl-caret voice -- claude        # run Claude with dictation redirected here
 ```
 
 `voice` starts a WebSocket server on `127.0.0.1`, speaks Claude's `voice_stream`
 protocol (linear16 16 kHz mono in; `TranscriptInterim` / `TranscriptText` /
-`TranscriptEndpoint` / `TranscriptError` out) and transcribes through Google
-Cloud Speech-to-Text V2 with `iw-IL`. Anthropic's own backend transcribes Hebrew
-as English; this returns Hebrew.
+`TranscriptEndpoint` / `TranscriptError` out) and transcribes through ElevenLabs
+Scribe v2 Realtime with `he`. Anthropic's own backend transcribes Hebrew as
+English; this returns Hebrew.
 
 Grey text while you hold the key is a hypothesis, and the committed text arrives
 when you let go — that split is Claude's, not ours. What is ours is making sure
 the committed text is the accurate engine's and not the fast one's guess: when
 the CLI stops the stream it gives the server 1500 ms of silence before giving up,
 so the server answers immediately and keeps the socket alive for the full 5000 ms
-the client allows. That is the window `chirp_3` needs to land its final.
+the client allows. That is the window the engine needs to land its final.
 
-The default provider is `hybrid`: a fast model (`long` @ eu) streams the live
-grey text while a multilingual one (`chirp_3` @ us) produces the transcript that
-actually gets committed, which is what keeps Hebrew/English code-switching
-intact. `--provider chirp` uses a single engine and commits sooner.
+Scribe runs its own voice-activity endpointer, so a finished sentence is
+committed while you are still talking rather than at the end of the recording.
+When the mic stops, the tail is committed explicitly instead of waiting out the
+silence threshold.
 
 Other commands:
 
@@ -275,8 +275,7 @@ rtl-caret voice test 5           # record 5s from the mic and print the transcri
 ```
 
 Configuration lives in `~/.config/rtl-caret/voice.json` (mode 0600), and
-`GOOGLE_STT_CREDENTIAL` / `GOOGLE_APPLICATION_CREDENTIALS` override the stored
-credential. Set `"enabled": false` there to turn dictation off without changing
+`ELEVENLABS_API_KEY` / `XI_API_KEY` override the stored credential. Set `"enabled": false` there to turn dictation off without changing
 how you launch Claude — the wrapper then runs the command untouched.
 
 This is a separate feature: `install` and `uninstall` neither enable it nor
