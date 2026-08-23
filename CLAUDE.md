@@ -11,7 +11,7 @@ Zero-dependency at runtime except `bidi-js`, which is inlined into the patch.
 | `bin/rtl-caret.js`   | CLI: `status` / `install` / `uninstall` / `voice`, flag parsing |
 | `src/patch.js`       | finds editor bundles, builds the payload, patches/reverts them |
 | `src/caret.js`       | the injected logic: recovery, caret mapping, mirroring, shift  |
-| `src/voice/`         | Hebrew dictation: local `voice_stream` server + ElevenLabs Scribe |
+| `src/voice/`         | Hebrew dictation: local `voice_stream` server, ElevenLabs Scribe or local Whisper |
 | `test/run.js`        | assertion runner over `test/fixtures/*.json`                   |
 | `test/voice.js`      | assertion runner for `src/voice/`                              |
 | `tools/*.py`         | pty probes that record the fixtures; not shipped runtime code  |
@@ -97,6 +97,33 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
   English mid-sentence. `secondary_languages=en` is what stops them coming back
   transliterated into Hebrew letters, and it is the default. It is also the job
   the two-engine hybrid provider used to do.
+- The local engine is `provider: "whisper"` - faster-whisper in a Python
+  sidecar (`whisper_sidecar.py`) behind a pipe, spoken to with
+  `[1 byte type][4 byte big-endian length][payload]` so audio is never
+  base64'd. It is started once and outlives every microphone press: loading
+  the model costs about five seconds, which is not a price to pay per press.
+  The venv is `~/.local/share/rtl-caret/whisper-venv`, and CUDA comes from
+  pip - the sidecar dlopens `site-packages/nvidia/*/lib` itself rather than
+  making the caller set `LD_LIBRARY_PATH`.
+- **Whisper is PULL, Scribe is PUSH.** Whisper has no endpointer, so the local
+  energy VAD decides when an utterance ended and `endSegment()` returns the
+  text; `onFinal` is never called. Wiring it as a push provider would commit
+  nothing until the microphone stopped.
+- **Fed silence, Whisper invents a sentence** - in Hebrew, reliably
+  "תודה רבה". That is not an edge case: the tail of every microphone press is
+  silence. A buffer must hold `minVoicedMs` of audio over the same RMS floor
+  the endpointer uses before it is decoded at all.
+- Whisper's default temperature is a fallback ladder: a decode whose logprob or
+  compression ratio looks wrong is retried at 0.2, 0.4 ... 1.0, each retry a
+  full pass. Half an utterance trips it constantly, which turned a 470 ms
+  hypothesis into 1900 ms. Hypotheses run at a fixed `temperature=0`; only the
+  commit gets the ladder.
+- One card, one inference at a time. A hypothesis and a commit that overlap
+  queue on the GPU and can exhaust it, so a lock serializes them and a
+  hypothesis that has not started yet yields to a waiting commit.
+- The encoder cost is flat: the mel is padded to thirty seconds, so twelve
+  seconds of speech costs the same ~470 ms as one. Segment length is not a
+  latency knob; `partialMs` is.
 - `src/voice/` must stay out of the `install` path: `require` it lazily, so the
   patch commands never load `ws`.
 - Ported from the `claude-code-hebrew` extension. Fixes belonging to both should

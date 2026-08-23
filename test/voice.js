@@ -20,6 +20,7 @@ const {
   MAX_KEYTERMS,
   MAX_KEYTERM_LENGTH
 } = require('../src/voice/elevenlabs');
+const { WhisperProvider, mapWhisperError, encodeFrame, resolvePython, venvPython } = require('../src/voice/whisper');
 const config = require('../src/voice/config');
 const server = require('../src/voice/server');
 const cli = require('../src/voice/cli');
@@ -656,6 +657,154 @@ async function testHealthAndAdoption() {
 
 // ---------- run ----------
 
+
+// ---------- whisper (local engine) ----------
+
+/* A child-process-shaped stand-in. The sidecar's own behaviour is Python's
+ * business; what has to hold here is the framing and the commit bookkeeping,
+ * neither of which needs a GPU to be wrong. */
+function fakeSidecar() {
+  const { EventEmitter } = require('events');
+  const proc = new EventEmitter();
+  proc.written = [];
+  proc.killed = false;
+  proc.stdin = {
+    destroyed: false,
+    write(buf) {
+      proc.written.push(Buffer.from(buf));
+      return true;
+    },
+    end() {
+      this.destroyed = true;
+    }
+  };
+  proc.stdout = new EventEmitter();
+  proc.stderr = new EventEmitter();
+  proc.kill = () => {
+    proc.killed = true;
+  };
+  proc.say = (obj) => proc.stdout.emit('data', Buffer.from(`${JSON.stringify(obj)}\n`));
+  return proc;
+}
+
+function decodeFrames(chunks) {
+  const buf = Buffer.concat(chunks);
+  const out = [];
+  let i = 0;
+  while (i + 5 <= buf.length) {
+    const type = buf.readUInt8(i);
+    const len = buf.readUInt32BE(i + 1);
+    out.push({ type, payload: buf.subarray(i + 5, i + 5 + len) });
+    i += 5 + len;
+  }
+  return out;
+}
+
+const READY = { type: 'ready', model: 'm', device: 'cuda', computeType: 'int8_float16', loadMs: 10 };
+
+function testWhisperConfig() {
+  const w = config.load({ provider: 'whisper' }, {}, '/nonexistent');
+  eq(w.provider, 'whisper', 'whisper is a selectable provider');
+  eq(w.whisper.model, 'ivrit-ai/whisper-large-v3-turbo-ct2', 'the Hebrew model is the local default');
+  eq(w.whisper.device, 'auto', 'the device is resolved in the sidecar, not here');
+  // The Scribe model check must not reach into the local engine: "model" names
+  // a Scribe id and has nothing to say about which Whisper is loaded.
+  const named = config.load({ provider: 'whisper', model: 'long' }, {}, '/nonexistent');
+  eq(named.whisper.model, 'ivrit-ai/whisper-large-v3-turbo-ct2', 'the local model is untouched by the Scribe check');
+
+  const typed = config.normalizeWhisper({ device: 'gpu', partialMs: 10, finalBeamSize: 99, offline: 'true' });
+  eq(typed.device, 'auto', 'a device name CTranslate2 does not know falls back to auto');
+  eq(typed.partialMs, 250, 'a hypothesis interval below the decode cost is clamped');
+  eq(typed.finalBeamSize, 10, 'the beam size is clamped');
+  eq(typed.offline, true, 'a string boolean is read as one');
+  eq(config.normalizeWhisper('nonsense').partialBeamSize, 1, 'a non-object whisper block falls back wholesale');
+
+  eq(cli.buildProvider(w).id, 'whisper', 'the whisper provider is built');
+  // No credential is involved, so a missing one must not fail the way it does
+  // for Scribe - the whole point of the local engine.
+  eq(cli.buildProvider(Object.assign({}, w, { credential: '' })).id, 'whisper', 'whisper needs no credential');
+
+  ok(/whisper-venv/.test(venvPython()), 'the venv python lives under the rtl-caret data dir');
+  // A typo in whisper.python must fail naming the path that was typed, not
+  // quietly run a different interpreter.
+  eq(resolvePython('/definitely/not/here'), '/definitely/not/here', 'an explicitly named python is used as named');
+  ok(/faster-whisper/.test(mapWhisperError({ message: 'ModuleNotFoundError: No module named faster_whisper' }, 'py').message),
+    'a missing module is answered with the install command');
+  eq(mapWhisperError({ message: 'CUDA failed with error out of memory' }, 'py').hint, 'vram',
+    'an exhausted card is named as one');
+}
+
+async function testWhisperSession() {
+  const proc = fakeSidecar();
+  let spawns = 0;
+  const provider = new WhisperProvider({ languageCode: 'he', settleTimeoutMs: 200 }, () => {
+    spawns++;
+    return proc;
+  });
+  const interims = [];
+  const errors = [];
+  const opening = provider.createSession({ onInterim: (t) => interims.push(t), onError: (e) => errors.push(e) });
+  // The model takes seconds to load; nothing may be sent at it until it says so.
+  eq(decodeFrames(proc.written).length, 0, 'no frames go out before the model is ready');
+  proc.say(READY);
+  const session = await opening;
+  eq(decodeFrames(proc.written).map((f) => JSON.parse(f.payload).cmd).join('|'), 'reset',
+    'a new session starts from an empty buffer');
+
+  proc.written.length = 0;
+  const pcm = Buffer.from([1, 0, 2, 0, 3, 0]);
+  session.sendAudio(pcm);
+  const audio = decodeFrames(proc.written);
+  eq(audio.length, 1, 'one audio frame went out');
+  eq(audio[0].type, 0, 'audio rides the binary type, never base64');
+  eq(audio[0].payload.toString('hex'), pcm.toString('hex'), 'the samples arrive unchanged');
+
+  proc.say({ type: 'partial', text: 'שלום', ms: 470, audioMs: 700 });
+  eq(interims.join('|'), 'שלום', 'a hypothesis is painted as an interim');
+
+  proc.written.length = 0;
+  const committing = session.endSegment();
+  const commit = decodeFrames(proc.written).map((f) => JSON.parse(f.payload));
+  eq(commit[0].cmd, 'commit', 'endSegment asks the sidecar to transcribe');
+  // A late final from the previous utterance must not answer this commit.
+  proc.say({ type: 'final', id: 'stale', text: 'ישן', ms: 5, audioMs: 5 });
+  proc.say({ type: 'final', id: commit[0].id, text: 'שלום עולם', ms: 470, audioMs: 3000 });
+  eq(await committing, 'שלום עולם', 'the matching final is what endSegment returns');
+
+  // The engine owes a final and never sends it: the commit has to resolve, or
+  // the client sits until its own 5000 ms safety timer fires.
+  const stranded = await session.endSegment();
+  eq(stranded, '', 'a commit the sidecar never answers gives up on its own');
+
+  // A second session reuses the loaded model - the whole reason the process
+  // outlives the microphone.
+  await session.close();
+  const second = await provider.createSession({ onInterim: () => {}, onError: () => {} });
+  eq(spawns, 1, 'the model is loaded once, not once per microphone press');
+
+  proc.written.length = 0;
+  const orphan = second.endSegment();
+  proc.emit('exit', 1, null);
+  eq(await orphan, '', 'a commit outstanding when the sidecar dies resolves rather than hangs');
+  ok(errors.length === 0 || /stopped/.test(errors[errors.length - 1].message), 'the death is reported to the live session');
+}
+
+async function testWhisperSidecarFailureIsExplained() {
+  const proc = fakeSidecar();
+  const provider = new WhisperProvider({ languageCode: 'he' }, () => proc);
+  const opening = provider.createSession({ onInterim: () => {}, onError: () => {} });
+  proc.stderr.emit('data', Buffer.from('Traceback (most recent call last):\nModuleNotFoundError: No module named \'faster_whisper\'\n'));
+  proc.say({ type: 'error', message: "ModuleNotFoundError: No module named 'faster_whisper'", fatal: true });
+  let message = '';
+  try {
+    await opening;
+  } catch (e) {
+    message = e.message;
+  }
+  ok(/faster-whisper/.test(message), `the install command is in the failure: ${message}`);
+  ok(/Traceback|ModuleNotFound/.test(message), 'the python traceback is kept, not swallowed');
+}
+
 async function main() {
   testVad();
   testCredentials();
@@ -663,6 +812,7 @@ async function main() {
   testConfig();
   testCliParse();
   testProviderSelection();
+  testWhisperConfig();
   await testElevenLabsSession();
   await testSocketRoundTrip();
   await testCommitIsAlwaysAPair();
@@ -671,6 +821,8 @@ async function main() {
   await testNoDoubleCommit();
   await testSocketReportsProviderFailure();
   await testHealthAndAdoption();
+  await testWhisperSession();
+  await testWhisperSidecarFailureIsExplained();
 
   console.log(`voice: ${checks - failures}/${checks} checks passed`);
   if (failures) {
