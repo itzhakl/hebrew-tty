@@ -88,6 +88,15 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
 - ElevenLabs wants a bare ISO-639-1 code, so Hebrew is `he`. A `voice.json`
   left over from the Google backend carries `iw-IL` and a Chirp model name;
   both are translated on load rather than sent as-is.
+- Scribe's list parameters are **repeated** query parameters, never
+  comma-joined. A comma-joined `secondary_languages` is rejected outright; a
+  comma-joined `keyterms` is accepted as ONE long term, which biases the model
+  at a string nobody will ever say. The live API echoes its resolved config in
+  `session_started` - read it there, not in the docs, when a knob looks ignored.
+- Terminal Hebrew is code-switched: paths, commands and library names arrive in
+  English mid-sentence. `secondary_languages=en` is what stops them coming back
+  transliterated into Hebrew letters, and it is the default. It is also the job
+  the two-engine hybrid provider used to do.
 - `src/voice/` must stay out of the `install` path: `require` it lazily, so the
   patch commands never load `ws`.
 - Ported from the `claude-code-hebrew` extension. Fixes belonging to both should

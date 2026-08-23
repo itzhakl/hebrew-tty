@@ -16,7 +16,9 @@ const {
   parseElevenLabsCredential,
   mapElevenLabsError,
   buildRealtimeUrl,
-  normalizeLanguage
+  normalizeLanguage,
+  MAX_KEYTERMS,
+  MAX_KEYTERM_LENGTH
 } = require('../src/voice/elevenlabs');
 const config = require('../src/voice/config');
 const server = require('../src/voice/server');
@@ -111,6 +113,9 @@ function testCredentials() {
   // microphone and the whole utterance would ride on our own flush.
   eq(url.searchParams.get('commit_strategy'), 'vad', 'server-side endpointing is on');
 
+  eq(url.searchParams.get('secondary_languages'), null, 'no second language unless asked for');
+  eq(url.searchParams.get('no_verbatim'), null, 'verbatim is the default');
+
   eq(mapElevenLabsError({ message_type: 'auth_error', error: 'bad key' }).hint, 'set-api-key', 'auth hint');
   eq(mapElevenLabsError({ message_type: 'quota_exceeded', error: 'no credits' }).hint, 'quota', 'quota hint');
   eq(mapElevenLabsError(new Error('getaddrinfo ENOTFOUND api.elevenlabs.io')).hint, 'network', 'network hint');
@@ -118,6 +123,42 @@ function testCredentials() {
     'unknown errors carry no hint');
   ok(mapElevenLabsError({ message_type: 'auth_error', error: 'bad key' }).message.includes('bad key'),
     'the raw server text survives');
+}
+
+/* Both list parameters have to be repeated, never comma-joined. The live API
+ * rejects a comma-joined secondary_languages outright, and accepts comma-joined
+ * keyterms as ONE long term - biasing the model at a string nobody will say. */
+function testHebrewTuning() {
+  const tuned = new URL(
+    buildRealtimeUrl({
+      languageCode: 'he',
+      secondaryLanguages: ['en', 'ar'],
+      keyterms: ['claude', 'קומיט'],
+      noVerbatim: true,
+      filterBackgroundAudio: true,
+      vadSilenceThresholdSecs: 0.8
+    })
+  );
+  eq(tuned.searchParams.getAll('secondary_languages').join('|'), 'en|ar', 'each language is its own parameter');
+  eq(tuned.searchParams.getAll('keyterms').join('|'), 'claude|קומיט', 'each keyterm is its own parameter');
+  eq(tuned.searchParams.get('no_verbatim'), 'true', 'no_verbatim is passed on');
+  eq(tuned.searchParams.get('filter_background_audio'), 'true', 'background filtering is passed on');
+  eq(tuned.searchParams.get('vad_silence_threshold_secs'), '0.8', 'the silence threshold is passed on');
+
+  // Naming the primary language again narrows nothing and reads as a mistake.
+  const dupe = new URL(buildRealtimeUrl({ languageCode: 'iw-IL', secondaryLanguages: ['he', 'en'] }));
+  eq(dupe.searchParams.getAll('secondary_languages').join('|'), 'en', 'the primary language is not repeated as a secondary');
+
+  const coerced = new URL(buildRealtimeUrl({ languageCode: 'he', secondaryLanguages: 'en, ar' }));
+  eq(coerced.searchParams.getAll('secondary_languages').join('|'), 'en|ar', 'a comma string is split, not sent whole');
+
+  // Over the server's limits earns an invalid_request at mic time, where the
+  // failure is invisible behind Claude's UI.
+  const long = 'x'.repeat(MAX_KEYTERM_LENGTH + 1);
+  const capped = new URL(buildRealtimeUrl({ keyterms: ['ok', long] }));
+  eq(capped.searchParams.getAll('keyterms').join('|'), 'ok', 'an over-long keyterm is dropped, not truncated');
+  const many = new URL(buildRealtimeUrl({ keyterms: Array.from({ length: MAX_KEYTERMS + 10 }, (_, i) => `t${i}`) }));
+  eq(many.searchParams.getAll('keyterms').length, MAX_KEYTERMS, 'the keyterm list is capped');
 }
 
 // ---------- config ----------
@@ -131,6 +172,10 @@ function testConfig() {
   eq(empty.language, 'he', 'Hebrew is the default language');
   eq(empty.provider, 'elevenlabs', 'elevenlabs is the default provider');
   eq(empty.model, 'scribe_v2_realtime', 'the realtime Scribe model is the default');
+  // Terminal Hebrew is code-switched: paths and commands arrive in English.
+  eq(empty.secondaryLanguages.join('|'), 'en', 'English rides along with Hebrew by default');
+  eq(empty.noVerbatim, false, 'dictation returns what was said by default');
+  eq(empty.vadSilenceThresholdSecs, null, 'the server keeps its own silence threshold by default');
 
   config.save({ credential: 'sk_saved', port: 9000 }, file);
   eq(fs.statSync(file).mode & 0o777, 0o600, 'config file is 0600');
@@ -157,6 +202,15 @@ function testConfig() {
   eq(migrated.provider, 'elevenlabs', 'the retired provider is replaced');
   eq(migrated.model, 'scribe_v2_realtime', 'the retired model is replaced');
 
+  // A hand-edited voice.json holds whatever the user typed.
+  config.save({ secondaryLanguages: 'en, ar', keyterms: 'קלוד', noVerbatim: 'true', vadSilenceThresholdSecs: 9 }, file);
+  const typed = config.load({}, {}, file);
+  eq(typed.secondaryLanguages.join('|'), 'en|ar', 'a bare string becomes a list');
+  eq(typed.keyterms.join('|'), 'קלוד', 'a single keyterm becomes a list');
+  eq(typed.noVerbatim, true, 'a string boolean is read as one');
+  // The server rejects anything outside 0.3-3.0 rather than clamping it.
+  eq(typed.vadSilenceThresholdSecs, 3, 'an out-of-range silence threshold is clamped');
+
   fs.writeFileSync(file, '{not json');
   throwsWith(() => config.load({}, {}, file), 'not valid JSON', 'corrupt config is reported, not swallowed');
   fs.rmSync(dir, { recursive: true, force: true });
@@ -171,6 +225,10 @@ function testCliParse() {
 
   const model = cli.parse(['serve', '--model', 'scribe_v2_realtime']);
   eq(model.overrides.model, 'scribe_v2_realtime', 'model flag parsed');
+
+  const tuned = cli.parse(['serve', '--secondary', 'en', '--keyterm', 'claude', '--keyterm', 'קומיט']);
+  eq(tuned.overrides.secondaryLanguages, 'en', 'secondary flag parsed');
+  eq(tuned.overrides.keyterms.join('|'), 'claude|קומיט', 'keyterm repeats accumulate');
 
   const serve = cli.parse(['serve', '--verbose']);
   eq(serve.sub, 'serve', 'subcommand parsed');
@@ -601,6 +659,7 @@ async function testHealthAndAdoption() {
 async function main() {
   testVad();
   testCredentials();
+  testHebrewTuning();
   testConfig();
   testCliParse();
   testProviderSelection();

@@ -176,3 +176,12 @@ fast transcript.
 provider translates `iw-IL` to `he`, and a leftover Google credential is
 rejected by name rather than as a generic auth failure — the user is told to run
 `rtl-caret voice setup`, not left reading a 401.
+
+**Tuning surface.** Scribe exposes the knobs the hybrid provider used to
+approximate: `secondary_languages` (English inside a Hebrew sentence — the
+default), `keyterms` (up to 50 biasing words), `no_verbatim`,
+`filter_background_audio` and `vad_silence_threshold_secs`. Both list
+parameters are repeated query parameters; comma-joining `secondary_languages`
+is rejected and comma-joining `keyterms` silently produces one nonsense term.
+Verified against the live API, which echoes its resolved configuration back in
+`session_started` — the authoritative answer to "did that setting take".
