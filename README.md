@@ -274,7 +274,39 @@ rtl-caret voice status           # is anything reachable, and how is it configur
 rtl-caret voice test 5           # record 5s from the mic and print the transcript
 ```
 
-Configuration lives in `~/.config/rtl-caret/voice.json` (mode 0600), and
+### Tuning Hebrew
+
+Configuration lives in `~/.config/rtl-caret/voice.json` (mode 0600). The
+defaults already aim at dictating Hebrew into a terminal; these are the keys
+worth changing:
+
+| key | default | what it does |
+| --- | --- | --- |
+| `secondaryLanguages` | `["en"]` | other languages allowed inside the same sentence. Terminal Hebrew is code-switched — paths, commands and library names arrive in English — and without this they come back transliterated into Hebrew letters. |
+| `keyterms` | `[]` | up to 50 words the model keeps mishearing, each at most 20 characters. Longer ones are dropped rather than truncated. |
+| `vadSilenceThresholdSecs` | server's `1.5` | how long a pause ends a sentence. Lower commits sooner while you are still talking; the server accepts 0.3–3.0. |
+| `noVerbatim` | `false` | strips fillers and false starts. Off because it also edits speech that was not a filler. |
+| `filterBackgroundAudio` | `false` | ignores nearby conversation. Also drops the server's speech threshold from 0.4 to 0.15, so it picks you up more eagerly. |
+
+```json
+{
+  "language": "he",
+  "secondaryLanguages": ["en"],
+  "keyterms": ["rtl-caret", "קומיט", "פוש"],
+  "vadSilenceThresholdSecs": 0.8
+}
+```
+
+`--secondary` and `--keyterm` set the same two from the command line, which is
+easier while you are still finding out which terms you need:
+
+```sh
+rtl-caret voice test 5 --keyterm rtl-caret --keyterm קומיט
+```
+
+`rtl-caret voice status` prints the languages and keyterms actually in effect,
+including any keyterm dropped for being too long.
+
 `ELEVENLABS_API_KEY` / `XI_API_KEY` override the stored credential. Set `"enabled": false` there to turn dictation off without changing
 how you launch Claude — the wrapper then runs the command untouched.
 
