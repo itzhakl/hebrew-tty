@@ -276,7 +276,16 @@ rtl-caret voice serve            # foreground server, prints the export line
 rtl-caret voice env              # export line for a server already running
 rtl-caret voice status           # is anything reachable, and how is it configured
 rtl-caret voice test 5           # record 5s from the mic and print the transcript
+rtl-caret voice levels 8         # measure this microphone: room, speech, and the bar
 ```
+
+`voice levels` is the one to run when dictation only commits after you let the
+key go. It records without transcribing, turns each 20 ms into a single RMS
+number and drops the audio — nothing is written to disk or sent anywhere — then
+reports the room, how far speech sits above it, and whether the endpointer's bar
+is reachable. A laptop microphone with its gain wound up can hear itself almost
+as loudly as it hears you; when it does, the command names the
+`vadNoiseRatio` that fits it.
 
 ### Tuning Hebrew
 
@@ -358,6 +367,10 @@ measured room and the resulting bar on every commit:
 ```
 commit (silence): 28 chars, room 0.0155, speech above 0.0464
 ```
+
+If speech never clears the bar, `vadNoiseRatio` is the knob — it is how much
+louder than the room speech has to be, three by default. `rtl-caret voice
+levels` measures both ends and names the number that fits the microphone.
 
 `endpointMs` is the knob for felt latency: it is how long a pause has to run
 before the sentence is committed, and it is added to the ~470 ms the decode
