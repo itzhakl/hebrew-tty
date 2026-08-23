@@ -244,6 +244,8 @@ function testConfig() {
   eq(flags.language, 'ar-SA', 'language flag applies');
 
   eq(config.load({ provider: 'nonsense' }, {}, file).provider, 'elevenlabs', 'unknown provider falls back');
+  eq(config.load({}, {}, file).vadNoiseRatio, 3, 'speech is asked to beat the room threefold by default');
+  eq(config.load({ vadNoiseRatio: 0.5 }, {}, file).vadNoiseRatio, 1.2, 'a ratio that cannot separate speech from the room is clamped');
 
   // A voice.json left over from the Google backend must not send "long" as a
   // Scribe model_id, nor keep selecting an engine that is gone.

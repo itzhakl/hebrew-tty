@@ -139,6 +139,12 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
   nobody starts talking that fast) and puts the bar at three times it. The
   segment those first frames opened against the absolute threshold is taken
   back once the room is known, or it would commit itself 600 ms later.
+- `noiseRatio` is not one number for every microphone. A headset hears speech
+  ten times louder than its room; a laptop microphone with its gain wound up
+  hears itself at 0.15 RMS with nobody in the room, and asking speech to beat
+  three times that asks for more than it produces. `rtl-caret voice levels`
+  records without transcribing and reports both ends, which is the only way to
+  tell "the room clears the bar" from "speech does not".
 - Calibration needs the real 20 ms wire frames. A caller handing over whole
   seconds at a time is not measuring a room, so it is left on the absolute
   threshold rather than told that speech is the floor.
