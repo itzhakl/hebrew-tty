@@ -87,6 +87,55 @@ function testVad() {
   ok(!quiet.speaking, 'silence alone does not open a segment');
 }
 
+/* The bug this exists to prevent: a microphone whose own noise sits above the
+ * absolute threshold never falls silent, so nothing ever commits and dictation
+ * only lands when the key is released. Real frames are 20 ms - the room is
+ * measured from them, not from the whole-second frames the tests above use. */
+function testNoisyRoom() {
+  const ROOM = 900; // ~0.027 rms, five times the absolute threshold
+  const SPEECH = 9000;
+  // Returns the frame that ended a segment, not the last frame pushed - the
+  // commit lands mid-run and the frames after it are a new segment.
+  const feed = (ep, ms, amplitude) => {
+    let out = {};
+    for (let i = 0; i < ms / 20; i++) {
+      const r = ep.pushFrame(frame(20, amplitude));
+      if ((r.commit || r.discarded) && !out.commit && !out.discarded) out = r;
+    }
+    return out;
+  };
+
+  const fixed = new Endpointer({ calibrationMinFrames: Infinity });
+  feed(fixed, 300, ROOM);
+  feed(fixed, 1000, SPEECH);
+  eq(feed(fixed, 2000, ROOM).commit, undefined, 'without calibration a noisy room never falls silent');
+
+  const ep = new Endpointer();
+  feed(ep, 300, ROOM);
+  ok(ep.calibrated, 'the room is measured from the leading pause');
+  ok(ep.threshold > ROOM / 32768, `speech has to beat the room: threshold ${ep.threshold}`);
+  ok(!ep.speaking, 'the segment the room opened before it was measured is taken back');
+  eq(feed(ep, 3000, ROOM).commit, undefined, 'three seconds of room alone commits nothing');
+  feed(ep, 1000, SPEECH);
+  ok(ep.speaking, 'speech over a noisy room is still speech');
+  eq(feed(ep, 400, ROOM).commit, undefined, 'a pause under endpointMs holds');
+  eq(feed(ep, 400, ROOM).commit, 'silence', 'the pause after speech commits in a noisy room');
+
+  // A room that goes quiet must not leave the threshold stranded high.
+  const hushed = new Endpointer();
+  feed(hushed, 300, ROOM);
+  const loudThreshold = hushed.threshold;
+  feed(hushed, 1000, 30);
+  ok(hushed.threshold < loudThreshold, 'a room that went quiet lowers the threshold');
+
+  // A caller handing over whole seconds is not measuring a room, and must be
+  // left on the absolute threshold rather than told that speech is the floor.
+  const coarse = new Endpointer();
+  coarse.pushFrame(frame(400, SPEECH));
+  ok(!coarse.calibrated, 'one coarse frame does not calibrate a room');
+  eq(coarse.threshold, 0.005, 'an uncalibrated endpointer keeps the absolute threshold');
+}
+
 // ---------- credentials ----------
 
 function testCredentials() {
@@ -717,6 +766,8 @@ function testWhisperConfig() {
   eq(typed.partialMs, 250, 'a hypothesis interval below the decode cost is clamped');
   eq(typed.finalBeamSize, 10, 'the beam size is clamped');
   eq(typed.offline, true, 'a string boolean is read as one');
+  eq(config.normalizeWhisper({}).vadFilter, true, 'Silero is on by default');
+  eq(config.normalizeWhisper({ vadFilter: 'false' }).vadFilter, false, 'a string boolean turns Silero off');
   eq(config.normalizeWhisper('nonsense').partialBeamSize, 1, 'a non-object whisper block falls back wholesale');
 
   eq(cli.buildProvider(w).id, 'whisper', 'the whisper provider is built');
@@ -807,6 +858,7 @@ async function testWhisperSidecarFailureIsExplained() {
 
 async function main() {
   testVad();
+  testNoisyRoom();
   testCredentials();
   testHebrewTuning();
   testConfig();

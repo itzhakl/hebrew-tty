@@ -111,8 +111,15 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
   nothing until the microphone stopped.
 - **Fed silence, Whisper invents a sentence** - in Hebrew, reliably
   "תודה רבה". That is not an edge case: the tail of every microphone press is
-  silence. A buffer must hold `minVoicedMs` of audio over the same RMS floor
-  the endpointer uses before it is decoded at all.
+  silence. Silero (`vad_filter`) in front of the decoder is the only thing that
+  tells the two apart - measured against noise at four levels, `no_speech_prob`
+  came back 0.0 and `avg_logprob` looked like ordinary speech. It also pays for
+  itself: a buffer with no voice in it skips the encoder, 30 ms instead of 600.
+  An energy floor cannot do this job - the room clears it.
+- Silero and the endpointer answer different questions. The endpointer asks
+  "did the level drop", Silero asks "was that a voice". Neither substitutes for
+  the other, and the endpointer must stay the only holder of absolute levels -
+  two places holding the same threshold is how they drift.
 - Whisper's default temperature is a fallback ladder: a decode whose logprob or
   compression ratio looks wrong is retried at 0.2, 0.4 ... 1.0, each retry a
   full pass. Half an utterance trips it constantly, which turned a 470 ms
@@ -123,7 +130,21 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
   hypothesis that has not started yet yields to a waiting commit.
 - The encoder cost is flat: the mel is padded to thirty seconds, so twelve
   seconds of speech costs the same ~470 ms as one. Segment length is not a
-  latency knob; `partialMs` is.
+  latency knob; `partialMs` and `endpointMs` are.
+- **A fixed energy threshold does not survive a real microphone.** At 0.005 a
+  quiet room already reads as speech, so silence never arrives, nothing ever
+  commits, and dictation only lands when the key is released - which looks like
+  slowness, not like a broken endpointer. `vad.js` measures the room over the
+  first 300 ms of each press (Claude streams from the moment the mic opens, and
+  nobody starts talking that fast) and puts the bar at three times it. The
+  segment those first frames opened against the absolute threshold is taken
+  back once the room is known, or it would commit itself 600 ms later.
+- Calibration needs the real 20 ms wire frames. A caller handing over whole
+  seconds at a time is not measuring a room, so it is left on the absolute
+  threshold rather than told that speech is the floor.
+- The hypothesis loop skips a buffer whose tail has gone quiet: the speaker has
+  stopped, the text would repeat the last one, and starting it now only makes
+  the commit queue behind half a second of decoding.
 - `src/voice/` must stay out of the `install` path: `require` it lazily, so the
   patch commands never load `ws`.
 - Ported from the `claude-code-hebrew` extension. Fixes belonging to both should
