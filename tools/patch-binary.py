@@ -43,6 +43,11 @@ SITES = {
     "row":    (b'={char:" "', 300, 100, rb'let (\w+)=(\w+),(\w+)=\{char:" "'),
     "flush":  (b'.relativeX', 300, 200,
                rb'\{x:(\w+)\.x\+(\w+)\.relativeX,y:\1\.y\+\2\.relativeY\}'),
+    # The input renderer's fork: with highlights it draws one <Text> per
+    # highlighted run, without them one <Text> for the whole line.
+    "hl":     (b'renderedRowStartOffsets', 200, 100,
+               rb'(\w+)=(\w+)&&\2\.length>0\?(\w+)\((\w+),(\w+),'
+               rb'(\w+)\.renderedRowStartOffsets\):\2;if\(\1&&\1\.length>0\)return '),
 }
 SIG = re.compile(rb'function (\w+)\((\w+),(\w+),(\w+),(\w+),(\w+),(\w+),(\w+)\)\{')
 BLOB = re.compile(rb'file:///\$bunfs/root/([A-Za-z0-9._-]{1,60})')
@@ -139,6 +144,31 @@ def caret_map():
         b"let j=d?d-1:0,v=Q[j],b=S[v].width||1,o=L[v]&1;"
         b"return d?V[v]+(o?0:b):V[v]+(o?b:0)};"
     )
+
+
+def one_run(buf):
+    """Keep a line that holds RTL out of the highlighted renderer.
+
+    Claude draws the prompt input as a single <Text> - one write op, one bidi
+    reorder, one row to align - until something wants part of it coloured. A
+    highlight splits the row into one <Text> per run, and Ink then emits a
+    write op per run. Reordering and right-alignment are per op, so two RTL
+    runs both flush to the right edge and the second paints over the first:
+    the row goes blank while it is being dictated, and the caret follows a
+    fragment rather than the line.
+
+    Dictation is the case that always hits it - the interim transcript is
+    painted as a dim highlight for as long as the microphone is open - but a
+    keyword or a mention splits the row the same way.
+
+    Nothing here reorders anything. It only says that a line with RTL in it
+    takes the path that already works, and loses its colouring while it does.
+    """
+    lo, hi, m = find(buf, "hl")
+    tail = b")return "
+    return (lo, hi,
+            m.group(0)[:-len(tail)] + b"&&!/[\\u0590-\\u08ff]/.test("
+            + m.group(5) + b")" + tail)
 
 
 def edits(d):
@@ -275,6 +305,11 @@ def main():
         buf = buf[:a] + new + buf[b:]
     sig = SIG.search(buf, d["row"][0] - 4000)
     buf = buf[:sig.end()] + b" " * (freed2 - grown) + buf[sig.end():]
+
+    # 3. The input renderer lives in its own chunk and pays for itself there.
+    buf, grown3, freed3, _ = apply_in_chunk(buf, [one_run(buf)])
+    lo3, hi3, new3 = one_run(buf)
+    buf = buf[:lo3] + new3 + b" " * (freed3 - grown3) + buf[hi3:]
 
     if len(buf) != original:
         sys.exit(f"length changed by {len(buf) - original}")

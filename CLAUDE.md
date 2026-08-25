@@ -65,6 +65,18 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
   2.1.243 that module is a chunk with a few hundred spare bytes, so the caret
   map lives in whatever chunk has room and is reached through `globalThis`.
   Falling back to the logical column is correct; throwing is not.
+- One row, one write op. Claude draws the prompt input as a single `<Text>`
+  until something wants part of it coloured; a highlight splits it into one
+  `<Text>` per run and Ink emits a write op per run. Reordering and alignment
+  are per op, so two RTL runs both flush to the right edge and the second
+  paints over the first. A line holding RTL is therefore kept out of the
+  highlighted renderer and loses its colouring, rather than the row being
+  reassembled after the fact. Dictation is the case that always hits this -
+  the interim transcript is a dim highlight for as long as the mic is open.
+- A chunk with room is not a chunk that runs. The payload reached through
+  `globalThis` is dead unless its chunk is instantiated, and nothing says so
+  out loud: the caret map just falls back to the logical column. Prefer an
+  edit that pays for itself where it sits.
 - Copying returns the logical text, so copy and paste round trip. A line that
   reorders to itself, or whose recovery does not verify, is copied verbatim -
   never guessed at.
