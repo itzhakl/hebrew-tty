@@ -2,8 +2,8 @@
 """Right-align RTL rows and put the caret on the glyph it edits, on any build.
 
 Nothing here matches a minified name: every site is found by the shape of its
-code and the names are read back out of the match. Verified on 2.1.241 and
-2.1.243, whose builds share no local identifiers at all.
+code and the names are read back out of the match. Verified on 2.1.241,
+2.1.243 and 2.1.246, whose builds share no local identifiers at all.
 
 What it does:
 
@@ -25,6 +25,7 @@ from the row painter: 2.1.243 has only ~350 spare bytes where the painter is.
 
     python3 patch_v4.py <input-binary> <output-binary>
 """
+import os
 import re
 import subprocess
 import sys
@@ -50,7 +51,6 @@ SITES = {
                rb'(\w+)\.renderedRowStartOffsets\):\2;if\(\1&&\1\.length>0\)return '),
 }
 SIG = re.compile(rb'function (\w+)\((\w+),(\w+),(\w+),(\w+),(\w+),(\w+),(\w+)\)\{')
-BLOB = re.compile(rb'file:///\$bunfs/root/([A-Za-z0-9._-]{1,60})')
 IMPORT_END = re.compile(rb'from"/\$bunfs/root/[A-Za-z0-9._-]{1,60}";')
 
 # Rewrites that free bytes without changing meaning. `undefined` compares false
@@ -85,26 +85,47 @@ def find(buf, key):
     return off, off + (m.end() - m.start()), m
 
 
-NAME = re.compile(rb'/\$bunfs/root/[A-Za-z0-9._-]{1,60}')
+HEADER = re.compile(rb'\x00// @bun @bytecode\n')
+IMPORTS = re.compile(rb'import\{([^}]{1,40000})\}from"/\$bunfs/root/([A-Za-z0-9._/-]{1,80})"')
+EXPORTS = re.compile(rb'export\{([^}]{1,40000})\};')
 
 
 def chunks(buf):
-    """Source spans, one per embedded module, ending at its metadata blob.
+    """Source spans, one per embedded module, named by whoever imports them.
 
-    Builds before 2.1.243 carry no per-module blobs; there the whole embedded
-    bundle between the name table's ends is one span.
+    A module opens with its `@bun @bytecode` banner and its source runs to the
+    NUL that ends it. Where the bytecode sits relative to that source is a
+    build's business and it has already moved once: until 2.1.245 each
+    module's constant pool followed its source, and 2.1.246 gathered every
+    pool into one region ahead of every source. Reading the layout off the
+    pools tracked neither - it named a span with the pool of the span before.
+
+    The name comes from the other side instead. A module exports aliases
+    carrying a suffix of its own, so the import statement naming those aliases
+    names the module too, and having found one the module is statically
+    imported by construction. A span nobody imports stays unnamed and is never
+    offered the payload.
     """
-    out, prev = [], 0
-    for m in BLOB.finditer(buf):
-        out.append((prev, m.start(), m.group(1).decode()))
-        prev = m.start()
-    # One stray blob is not a layout; 2.1.243 carries well over a thousand.
-    if len(out) >= 16:
-        return out
-    names = [m for m in NAME.finditer(buf)]
-    if not names:
+    starts = [m.start() + 1 for m in HEADER.finditer(buf)]
+    if not starts:
         sys.exit("no module layout found")
-    return [(names[0].end(), names[-1].start(), "bundle")]
+    where = {}
+    for m in IMPORTS.finditer(buf):
+        for part in m.group(1).split(b","):
+            where.setdefault(part.split(b" as ")[0], m.group(2))
+    out = []
+    for lo in starts:
+        hi = buf.find(b"\x00", lo)
+        last = None
+        for m in EXPORTS.finditer(buf, lo, hi):
+            last = m
+        name = None
+        for part in (last.group(1).split(b",") if last else []):
+            name = where.get(part.split(b" as ")[-1])
+            if name:
+                break
+        out.append((lo, hi, name.decode() if name else None))
+    return out
 
 
 def host_of(spans, off):
@@ -407,7 +428,7 @@ def main():
     # and every helper silently fell back to doing nothing.
     others = [c for c in spans
               if not (c[0] <= d["row"][0] < c[1]) and c[1] - c[0] >= 100_000
-              and buf.count(b'from"/$bunfs/root/' + c[2].encode() + b'"') > 0]
+              and c[2] is not None]
     others.sort(key=lambda c: c[1] - c[0], reverse=True)
 
     placed = None
@@ -451,7 +472,7 @@ def main():
     write_out(src, dst, buf)
     print(f"length held at {original}")
 
-    out = subprocess.run([dst, "--version"], capture_output=True, timeout=180)
+    out = subprocess.run([os.path.abspath(dst), "--version"], capture_output=True, timeout=180)
     version = out.stdout.decode(errors="replace").strip()
     print("version:", version or "(empty - module graph broken)")
     if "Claude Code" not in version:
