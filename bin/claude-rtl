@@ -23,7 +23,13 @@ out="$base-rtl"
 
 if [ ! -x "$out" ] || [ "$base" -nt "$out" ]; then
   echo "claude-rtl: building $(basename "$out")" >&2
-  python3 "$patcher" "$base" "$out" >&2
+  # A build whose anchors moved must cost the alignment, never the session:
+  # this may be how the user starts Claude at all.
+  if ! python3 "$patcher" "$base" "$out" >&2; then
+    rm -f "$out"
+    echo "claude-rtl: patch failed, running $(basename "$base") unpatched" >&2
+    exec "$base" "$@"
+  fi
 fi
 
 exec "$out" "$@"
