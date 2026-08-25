@@ -16,6 +16,8 @@ Zero-dependency at runtime except `bidi-js`, which is inlined into the patch.
 | `test/voice.js`      | assertion runner for `src/voice/`                              |
 | `tools/*.py`         | pty probes that record the fixtures; not shipped runtime code  |
 | `tools/editor-probe.js` | drives a real patched editor over CDP; the only way to see the renderer |
+| `tools/patch-binary.py` | patches the Claude Code executable, for terminals that are not the editor |
+| `bin/claude-rtl`     | runs Claude Code from a patched build, rebuilding it after an upgrade |
 
 ## Commands
 
@@ -47,6 +49,16 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
 - Two bundles are patched, and the payload in both must carry the same flags:
   the WebGL addon for the caret, mirroring and alignment, and xterm's core for
   copying. Whichever loads first wins, and the rest is skipped by the guard.
+- `tools/patch-binary.py` must never match a minified name. Every site is found
+  by the shape of its code and the names are read back out of the match; the
+  same build renames them all. `test/binary.js` holds recordings from two
+  builds that share no identifier, and a pattern that stops resolving must fail
+  there rather than in a 340MB write.
+- The patched executable must keep its exact length — Bun addresses the module
+  graph by byte offsets — and bytes may only be moved inside one module. Since
+  2.1.243 that module is a chunk with a few hundred spare bytes, so the caret
+  map lives in whatever chunk has room and is reached through `globalThis`.
+  Falling back to the logical column is correct; throwing is not.
 - Copying returns the logical text, so copy and paste round trip. A line that
   reorders to itself, or whose recovery does not verify, is copied verbatim -
   never guessed at.

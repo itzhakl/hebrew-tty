@@ -3,19 +3,21 @@
   "version": "0.1.0",
   "description": "Put the VS Code / VSCodium terminal caret on the glyph it is actually editing in Hebrew and other RTL text",
   "bin": {
-    "rtl-caret": "bin/rtl-caret.js"
+    "rtl-caret": "bin/rtl-caret.js",
+    "claude-rtl": "bin/claude-rtl"
   },
   "main": "src/patch.js",
   "files": [
     "bin",
     "src",
     "tools/graft_hebrew.py",
+    "tools/patch-binary.py",
     "tools/style_alias.py",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "test": "node test/run.js && node test/voice.js"
+    "test": "node test/run.js && node test/voice.js && node test/binary.js"
   },
   "dependencies": {
     "bidi-js": "^1.0.3",
