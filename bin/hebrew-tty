@@ -21,12 +21,18 @@ const { spawn } = require('child_process');
 
 const argv = process.argv.slice(2);
 if (!argv.length || argv[0] === '--help') {
-  process.stdout.write('usage: hebrew-tty <command> [args...]\n');
+  process.stdout.write(
+    'usage: hebrew-tty [--as NAME] <command> [args...]\n\n' +
+    '  --as NAME   run the command under that process name; herdr finds an\n' +
+    '              agent pane by it, and a versioned build name is unknown\n');
   process.exit(argv.length ? 0 : 1);
 }
 
+const host_args = [];
+if (argv[0] === '--as') host_args.push('--argv0', argv.splice(0, 2)[1]);
+
 const host = path.join(__dirname, '..', 'tools', 'ptyhost.py');
-const child = spawn('python3', [host, ...argv], {
+const child = spawn('python3', [host, ...host_args, ...argv], {
   stdio: ['pipe', 'pipe', 'inherit', 'pipe'],
 });
 

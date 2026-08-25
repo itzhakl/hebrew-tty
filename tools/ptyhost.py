@@ -28,6 +28,16 @@ def set_size(fd, rows, cols):
 
 
 def main(argv):
+    """`--argv0 NAME` runs the command under a different process name.
+
+    herdr finds an agent pane by the name of the process in it, and a build
+    named after its version reads as an unknown process. The caller decides
+    what the child is called; we only carry it through.
+    """
+    argv0 = None
+    if len(argv) >= 2 and argv[0] == "--argv0":
+        argv0 = argv[1]
+        argv = argv[2:]
     if not argv:
         sys.exit("ptyhost: nothing to run")
     rows, cols = 24, 80
@@ -41,7 +51,7 @@ def main(argv):
     pid, master = pty.fork()
     if pid == 0:
         try:
-            os.execvp(argv[0], argv)
+            os.execvp(argv[0], [argv0 or argv[0]] + argv[1:])
         except OSError as err:
             sys.stderr.write(f"ptyhost: {argv[0]}: {err.strerror}\n")
             os._exit(127)
