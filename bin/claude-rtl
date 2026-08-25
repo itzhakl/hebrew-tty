@@ -3,8 +3,10 @@
 # editing, without touching the installed binary.
 #
 # The patched build is derived from whichever version `claude` points at now
-# and cached beside it, so a Claude upgrade costs one rebuild on the next run
-# rather than a reinstall. The original executable is never written to.
+# and cached beside it. A Claude upgrade costs one rebuild, and that rebuild
+# never happens in front of the user: the session that finds the build missing
+# runs the stock binary and leaves the patcher working behind it, so the next
+# launch is the patched one. The original executable is never written to.
 set -euo pipefail
 
 here="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
@@ -21,15 +23,35 @@ base="$(readlink -f "$claude")"
 base="${base%-rtl}"
 out="$base-rtl"
 
-if [ ! -x "$out" ] || [ "$base" -nt "$out" ]; then
-  echo "claude-rtl: building $(basename "$out")" >&2
-  # A build whose anchors moved must cost the alignment, never the session:
-  # this may be how the user starts Claude at all.
-  if ! python3 "$patcher" "$base" "$out" >&2; then
-    rm -f "$out"
-    echo "claude-rtl: patch failed, running $(basename "$base") unpatched" >&2
-    exec "$base" "$@"
-  fi
+if [ -x "$out" ] && [ ! "$base" -nt "$out" ]; then
+  exec "$out" "$@"
 fi
 
-exec "$out" "$@"
+# mkdir is the atomic part; a lock left behind by a killed build would
+# otherwise mean no rebuild ever happens again.
+lock="$out.building"
+if mkdir "$lock" 2>/dev/null; then
+  (
+    trap 'rm -rf "$lock"' EXIT
+    if python3 "$patcher" "$base" "$out.new" >/dev/null 2>&1; then
+      mv -f "$out.new" "$out"
+    else
+      rm -f "$out.new"
+    fi
+    # A build whose stock version is gone is dead weight.
+    for old in "$(dirname "$base")"/*-rtl; do
+      if [ -e "$old" ] && [ ! -e "${old%-rtl}" ]; then
+        rm -f "$old"
+      fi
+    done
+    exit 0
+  ) </dev/null >/dev/null 2>&1 &
+  echo "claude-rtl: building $(basename "$out") in the background, this session is unpatched" >&2
+elif [ -n "$(find "$lock" -maxdepth 0 -mmin +30 2>/dev/null)" ]; then
+  # Half an hour is far longer than a build takes, so this one is not running.
+  rm -rf "$lock"
+else
+  echo "claude-rtl: a build is already running, this session is unpatched" >&2
+fi
+
+exec "$base" "$@"

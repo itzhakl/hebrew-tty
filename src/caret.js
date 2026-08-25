@@ -36,10 +36,29 @@
    * keep their shape. That is how Claude paints - it never applies L4 - so a
    * line containing brackets is only recognisable when reordered the same way.
    * bidi-js does apply L4 in getReorderedString, hence the manual permute. */
-  function reorderOf(text) {
+  var STRONG_RTL = /[\u0590-\u08ff]/g;
+  var STRONG_LTR = /[A-Za-z]/g;
+
+  /* Base direction by the majority of strong characters, not by the first
+   * one. "auto" is bidi rule P2, so a Hebrew line that opens with a path, a
+   * flag or a version number takes its direction from that: the sentence
+   * lays out backwards and its full stop lands on the wrong side. The binary
+   * patch resolves it the same way, off the same logical text.
+   *
+   * A build patched before this rule painted every line on "auto", and a
+   * recording of one still has to be recognisable - so both are offered and
+   * whichever repaints the row is the one that stands. */
+  function baseDirs(text) {
+    var r = text.match(STRONG_RTL);
+    var l = text.match(STRONG_LTR);
+    if (!r || r.length < (l ? l.length : 0)) return ['auto'];
+    return ['rtl', 'auto'];
+  }
+
+  function reorderOf(text, dir) {
     var b = engine();
     if (!b) return null;
-    var levels = b.getEmbeddingLevels(text, 'auto');
+    var levels = b.getEmbeddingLevels(text, dir || baseDirs(text)[0]);
     var order = b.getReorderedIndices(text, levels, 0, text.length - 1);
     var out = new Array(order.length);
     for (var i = 0; i < order.length; i++) out[i] = text[order[i]];
@@ -68,6 +87,20 @@
     return out.join('');
   }
 
+  /* The direction that repaints this row, preferred over the one the majority
+   * rule alone would pick. Neither is a guess: the caller only keeps a
+   * candidate whose reordering equals the painted line exactly. */
+  function reorderFor(text, painted) {
+    var dirs = baseDirs(text), first = null, i, r;
+    for (i = 0; i < dirs.length; i++) {
+      r = reorderOf(text, dirs[i]);
+      if (!r) return null;
+      if (r.painted === painted) return r;
+      if (!first) first = r;
+    }
+    return first;
+  }
+
   function candidates(painted) {
     if (!painted || painted.length > MAX_LINE) return [];
     var found = [], seen = Object.create(null);
@@ -83,7 +116,7 @@
     for (var g = 0; g < guesses.length; g++) {
       var cand = guesses[g];
       for (var it = 0; it < 6; it++) {
-        var r = reorderOf(cand);
+        var r = reorderFor(cand, painted);
         if (!r) return found;
         if (r.painted === painted) {
           if (!seen[cand]) {
@@ -683,6 +716,7 @@
       recover: recover,
       spanOf: spanOf,
       candidates: candidates,
+      reorderOf: reorderOf,
       computeShift: computeShift,
       sourceColumn: sourceColumn,
       setShift: function (n) { currentShift = n; currentSegs = null; },
