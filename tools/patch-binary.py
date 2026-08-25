@@ -282,6 +282,37 @@ def apply_in_chunk(buf, plan, extra_note=""):
     return buf, grown, freed, name
 
 
+def write_out(src, dst, buf):
+    """Clone the stock binary, then write back only what the patch moved.
+
+    The patch holds the file's length and touches a few hundred kilobytes of
+    it. On a filesystem with reflinks the clone costs no space at all and the
+    patched build costs what it actually changed, rather than a second copy of
+    a 370MB executable per Claude version. Without reflinks the clone is a
+    real copy and this is the plain write it always was.
+    """
+    BLOCK = 1 << 16
+    clone = subprocess.run(["cp", "--reflink=auto", "--preserve=mode", src, dst])
+    if clone.returncode != 0:
+        open(dst, "wb").write(buf)
+        subprocess.run(["chmod", "+x", dst], check=True)
+        return
+    written = 0
+    with open(src, "rb") as old, open(dst, "r+b") as new:
+        at = 0
+        while True:
+            block = old.read(BLOCK)
+            if not block:
+                break
+            if block != buf[at:at + len(block)]:
+                new.seek(at)
+                new.write(buf[at:at + len(block)])
+                written += len(block)
+            at += len(block)
+    subprocess.run(["chmod", "+x", dst], check=True)
+    print(f"cloned, rewrote {written // 1024} KiB")
+
+
 def main():
     src, dst = sys.argv[1], sys.argv[2]
     buf = open(src, "rb").read()
@@ -344,8 +375,7 @@ def main():
     if len(buf) != original:
         sys.exit(f"length changed by {len(buf) - original}")
 
-    open(dst, "wb").write(buf)
-    subprocess.run(["chmod", "+x", dst], check=True)
+    write_out(src, dst, buf)
     print(f"length held at {original}")
 
     out = subprocess.run([dst, "--version"], capture_output=True, timeout=180)

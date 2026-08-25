@@ -17,7 +17,7 @@ Zero-dependency at runtime except `bidi-js`, which is inlined into the patch.
 | `tools/*.py`         | pty probes that record the fixtures; not shipped runtime code  |
 | `tools/editor-probe.js` | drives a real patched editor over CDP; the only way to see the renderer |
 | `tools/patch-binary.py` | patches the Claude Code executable, for terminals that are not the editor |
-| `bin/claude-rtl`     | runs Claude Code from a patched build, rebuilding it after an upgrade |
+| `bin/claude-rtl`     | runs Claude Code from a patched build, rebuilding it in the background |
 
 ## Commands
 
@@ -91,6 +91,15 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
   edge tears the table in half. The rule is `src/caret.js`'s `LAYOUT`, and the
   binary patch reads the same range off the same pass. The prompt input row
   carries no box drawing - its rules are rows of their own - so it still aligns.
+- A rebuild never happens in front of the user. An upgrade is found by the
+  next launch, which runs the stock binary and leaves the patcher working
+  behind it; the launch after that is the patched one. Waiting eighteen
+  seconds for Hebrew is worse than one session without it.
+- The patched build is a reflink clone with the changed blocks written back,
+  not a second copy. The patch holds the file's length and moves about a
+  megabyte, so that is what the build costs on disk instead of 370MB per
+  Claude version. Where reflinks are unavailable the clone is a real copy and
+  nothing else changes.
 
 ## Voice
 
