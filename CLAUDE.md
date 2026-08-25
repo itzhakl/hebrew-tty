@@ -73,6 +73,18 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
   highlighted renderer and loses its colouring, rather than the row being
   reassembled after the fact. Dictation is the case that always hits this -
   the interim transcript is a dim highlight for as long as the mic is open.
+- Where a module's bytecode sits is not where its source sits. Until 2.1.245
+  each module's constant pool followed its own source, so reading the layout
+  off the `file:///$bunfs/root/` strings in those pools happened to work -
+  off by one, unnoticed, because the name was only ever used to filter
+  candidates. 2.1.246 gathered every pool into one region ahead of every
+  source and the sites stopped landing in any span at all. Module boundaries
+  come from the source instead: a module opens with its `@bun @bytecode`
+  banner and ends at the NUL after it. Its name is read from the far side -
+  a module exports aliases carrying a suffix of its own, so the import
+  statement naming those aliases names the module, and having found one the
+  module is statically imported by construction. A span nobody imports stays
+  unnamed and is never offered the payload.
 - A chunk with room is not a chunk that runs. The payload reached through
   `globalThis` is dead unless its chunk is instantiated, and nothing says so
   out loud: the caret map just falls back to the logical column. Prefer an

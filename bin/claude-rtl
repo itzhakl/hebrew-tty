@@ -24,7 +24,9 @@ base="${base%-rtl}"
 out="$base-rtl"
 
 if [ -x "$out" ] && [ ! "$base" -nt "$out" ]; then
-  exec "$out" "$@"
+  # argv[0] must stay `claude`: agent multiplexers (herdr) detect the session by
+  # process name, and the versioned build name would read as an unknown process.
+  exec -a claude "$out" "$@"
 fi
 
 # mkdir is the atomic part; a lock left behind by a killed build would
@@ -54,4 +56,4 @@ else
   echo "claude-rtl: a build is already running, this session is unpatched" >&2
 fi
 
-exec "$base" "$@"
+exec -a claude "$base" "$@"
