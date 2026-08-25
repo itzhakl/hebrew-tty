@@ -64,6 +64,7 @@ SHRINK = [
 ]
 
 D, P, M, W, S, I, RQ = b"$rd_", b"$rp_", b"$rm_", b"$rw_", b"$rs_", b"$ri_", b"$rq_"
+RN = b"$rn_"
 
 
 def find(buf, key):
@@ -110,7 +111,7 @@ def host_of(spans, off):
 
 def derive(buf, check=False):
     if check:
-        for ident in (D, P, M, W, S, I, RQ):
+        for ident in (D, P, M, W, S, I, RQ, RN):
             if ident in buf:
                 sys.exit(f"identifier {ident.decode()} is already taken")
     d = {k: find(buf, k) for k in SITES}
@@ -144,6 +145,34 @@ def caret_map():
         b"let j=d?d-1:0,v=Q[j],b=S[v].width||1,o=L[v]&1;"
         b"return d?V[v]+(o?0:b):V[v]+(o?b:0)};"
     )
+
+
+def line_pass():
+    """One walk of a reordered line: bidi rule L4, and whether it is a layout row.
+
+    L4 is the rule Claude Code skips, so a bracket inside an RTL run keeps its
+    unmirrored glyph. The layout flag is the same test src/caret.js makes at
+    LAYOUT: a row carrying box drawing is part of a frame, and flushing it to
+    the right edge tears it away from the borders that hold still around it.
+
+    The reordered segment array is cached per source line, so the pass is
+    marked on the array itself. Running the mirror twice would swap every
+    bracket back, which looks exactly like not running it at all.
+    """
+    return (
+        b"globalThis." + RN + b"=function(" + S + b"){"
+        b"if(" + S + b".RM||!" + S + b".RL)return;" + S + b".RM=1;"
+        b'var B="()[]{}<>\\u00ab\\u00bb\\u2039\\u203a",'
+        b"L=/[\\u2500-\\u259f\\u2800-\\u28ff]/,V=0;"
+        b"for(var " + I + b"=0;" + I + b"<" + S + b".length;" + I + b"++){"
+        b"var c=" + S + b"[" + I + b"].value;"
+        b"if(L.test(c))V=1;"
+        b"if(!(" + S + b".RL[" + I + b"]&1))continue;"
+        b"var j=B.indexOf(c);"
+        b"if(j>=0)" + S + b"[" + I + b"][\"value\"]=B[j^1]}"
+        + S + b".RV=V};"
+    )
+
 
 
 def one_run(buf):
@@ -199,10 +228,11 @@ def edits(d):
          + b"[0]?.level===1," + ret + b".RP=" + P + b"," + ret + b".RL=" + lvarr + b","
          + ret + b"}"),
         (d["row"][0], d["row"][1],
+         b"globalThis." + RN + b"?.(" + seg + b");"
          b"let " + start + b"=" + logical + b"," + M + b"=globalThis." + M + b"??={};"
          b"if(" + seg + b".RA){let " + W + b"=0;for(let " + S + b" of " + seg + b")"
-         + W + b"+=" + S + b".width;if(" + width + b"-" + W + b"-1>" + start + b")"
-         + start + b"=" + width + b"-" + W + b"-1;" + M + b"[" + row_idx + b"]={x:"
+         + W + b"+=" + S + b".width;if(!" + seg + b".RV&&" + width + b"-" + W
+         + b"-1>" + start + b")" + start + b"=" + width + b"-" + W + b"-1;" + M + b"[" + row_idx + b"]={x:"
          + start + b",r:" + logical + b",P:" + seg + b".RP,S:" + seg + b",L:" + seg
          + b".RL}}else " + M + b"[" + row_idx + b"]=0;let " + cell + b"={char:\" \""),
         # Falls back to the logical column if the caret map's chunk is not loaded.
@@ -267,7 +297,7 @@ def main():
     # 1. The caret map goes wherever there is room, reached through globalThis.
     # Its own chunk is the last resort: on 2.1.243 the painter's chunk has only
     # a few hundred spare bytes and the map alone is larger than that.
-    body = caret_map()
+    body = caret_map() + line_pass()
     others = [s for s in spans if not (s[0] <= d["row"][0] < s[1]) and s[1] - s[0] >= 100_000]
     others.sort(key=lambda s: s[1] - s[0], reverse=True)
 

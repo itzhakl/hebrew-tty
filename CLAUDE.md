@@ -80,6 +80,17 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
 - Copying returns the logical text, so copy and paste round trip. A line that
   reorders to itself, or whose recovery does not verify, is copied verbatim -
   never guessed at.
+- Bidi rule L4 is ours to apply. Claude reorders without it, so a bracket that
+  ends up inside an RTL run keeps the glyph it was typed as and points the
+  wrong way. The binary patch mirrors it where `src/caret.js` already does, in
+  one pass over the reordered line - and that array is cached per source line,
+  so the pass marks itself. Mirroring twice swaps every bracket back, which
+  looks exactly like never having run.
+- A row carrying box drawing is not aligned, in either patch. The borders of a
+  table hold still because they hold no RTL, so flushing the cells to the right
+  edge tears the table in half. The rule is `src/caret.js`'s `LAYOUT`, and the
+  binary patch reads the same range off the same pass. The prompt input row
+  carries no box drawing - its rules are rows of their own - so it still aligns.
 
 ## Voice
 
