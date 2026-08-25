@@ -64,7 +64,7 @@ SHRINK = [
 ]
 
 D, P, M, W, S, I, RQ = b"$rd_", b"$rp_", b"$rm_", b"$rw_", b"$rs_", b"$ri_", b"$rq_"
-RN = b"$rn_"
+RN, RF = b"$rn_", b"$rf_"
 
 
 def find(buf, key):
@@ -111,7 +111,7 @@ def host_of(spans, off):
 
 def derive(buf, check=False):
     if check:
-        for ident in (D, P, M, W, S, I, RQ, RN):
+        for ident in (D, P, M, W, S, I, RQ, RN, RF):
             if ident in buf:
                 sys.exit(f"identifier {ident.decode()} is already taken")
     d = {k: find(buf, k) for k in SITES}
@@ -144,6 +144,23 @@ def caret_map():
         b"let d=0,w=R.r;while(d<q){let g=S[Q[d]].width||1;if(w+g>x)break;w+=g,d++}"
         b"let j=d?d-1:0,v=Q[j],b=S[v].width||1,o=L[v]&1;"
         b"return d?V[v]+(o?0:b):V[v]+(o?b:0)};"
+    )
+
+
+def base_dir():
+    """Base direction by the majority of strong characters, not the first one.
+
+    "auto" is bidi rule P2: the paragraph takes the direction of its first
+    strong character. A Hebrew line that opens with a path, a flag or a
+    version number therefore lays out left to right - the sentence reads
+    backwards and its full stop lands on the wrong side. Counting decides it
+    instead, and a line with no Hebrew in it is left on "auto" exactly as
+    before.
+    """
+    return (
+        b"globalThis." + RF + b"=function(t){"
+        b"var r=t.match(/[\\u0590-\\u08ff]/g),l=t.match(/[A-Za-z]/g);"
+        b'return r&&r.length>=(l?l.length:0)?"rtl":"auto"};'
     )
 
 
@@ -216,7 +233,8 @@ def edits(d):
     return [
         (d["levels"][0], d["levels"][1],
          b"{levels:" + levels + b",paragraphs:" + D + b"}=" + recv
-         + b".getEmbeddingLevels(" + text + b',"auto")'),
+         + b".getEmbeddingLevels(" + text + b",globalThis." + RF + b"?.(" + text
+         + b')??"auto")'),
         (d["init"][0], d["init"][1],
          b"let " + segs + b"=[..." + src + b"]," + P + b"=" + segs + b".map((_," + I
          + b")=>" + I + b")," + mx + b"=Math.max(..." + lvls + b");"),
@@ -328,7 +346,7 @@ def main():
     # 1. The caret map goes wherever there is room, reached through globalThis.
     # Its own chunk is the last resort: on 2.1.243 the painter's chunk has only
     # a few hundred spare bytes and the map alone is larger than that.
-    body = caret_map() + line_pass()
+    body = caret_map() + line_pass() + base_dir()
     others = [s for s in spans if not (s[0] <= d["row"][0] < s[1]) and s[1] - s[0] >= 100_000]
     others.sort(key=lambda s: s[1] - s[0], reverse=True)
 

@@ -12,6 +12,7 @@ const M = require(path.join(__dirname, '..', 'src', 'caret.js'));
 
 const painted = require('./fixtures/painted-lines.json');
 const typing = require('./fixtures/typing-samples.json');
+const baseDir = require('./fixtures/base-direction.json');
 
 let failures = 0;
 let checks = 0;
@@ -128,6 +129,42 @@ for (const { action, row, caret } of editSeq) {
   }
 }
 console.log(`  steps ${editSeq.length}, failures ${editBad}`);
+
+console.log('\nbase direction: a Hebrew line that opens in Latin still reads right to left');
+{
+  /* Recorded from a patched build, so `painted` is what the renderer really
+   * put on the row. Bidi rule P2 would hand a line opening with a path or a
+   * version number to the Latin side; the majority of strong characters
+   * decides it instead, and recovery has to follow the same rule or the
+   * caret falls back to the logical column. */
+  for (const { logical, painted: row } of baseDir.samples) {
+    // Ground truth: the text that was typed has to reorder to the row that
+    // was painted. Under bidi rule P2 the first three of these do not.
+    checks++;
+    const again = M.reorderOf(logical);
+    if (!again || again.painted !== row) {
+      fail(`base direction: ${JSON.stringify(logical)} repaints as ${again ? JSON.stringify(again.painted) : 'nothing'}`);
+      continue;
+    }
+    // Recovery may land on a different logical text - "2.1.243-rtl" and
+    // "rtl-2.1.243" paint the same row - but it must verify, never guess.
+    checks++;
+    const rec = M.recover(row);
+    if (!rec || M.reorderOf(rec.text).painted !== row) {
+      fail(`base direction: ${JSON.stringify(row)} recovered as ${rec ? JSON.stringify(rec.text) : 'nothing'}`);
+      continue;
+    }
+    // A line the majority rule calls RTL is also a line that flushes right.
+    const heb = (logical.match(/[\u0590-\u08ff]/g) || []).length;
+    const lat = (logical.match(/[A-Za-z]/g) || []).length;
+    checks++;
+    const shift = M.computeShift(row, 100);
+    if (heb >= lat ? !(shift > 0) : shift !== 0) {
+      fail(`base direction: ${JSON.stringify(row)} shift ${shift}`);
+    }
+  }
+}
+console.log(`  samples ${baseDir.samples.length}`);
 
 console.log('\nalignment: only plain RTL rows shift, and every column stays covered');
 const COLS = 100;

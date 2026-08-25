@@ -80,6 +80,18 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
 - Copying returns the logical text, so copy and paste round trip. A line that
   reorders to itself, or whose recovery does not verify, is copied verbatim -
   never guessed at.
+- The base direction is decided by counting, not by the first strong
+  character. Bidi rule P2 hands a whole line to whichever side opens it, so a
+  Hebrew sentence beginning with a path, a flag or a version number lays out
+  left to right and its full stop lands on the wrong side. Both patches
+  resolve it off the same logical text: RTL when the Hebrew letters are not
+  outnumbered by the Latin ones, `auto` otherwise. `src/caret.js` still offers
+  `auto` as a second candidate, because a row painted by a build from before
+  this rule has to stay recognisable.
+- A painted row does not name one logical text. `2.1.243-rtl` and
+  `rtl-2.1.243` paint the same row, so recovery can return the other one and
+  copying gives it back. It verifies rather than guesses, which is the
+  guarantee; being the text that was typed is not.
 - Bidi rule L4 is ours to apply. Claude reorders without it, so a bracket that
   ends up inside an RTL run keeps the glyph it was typed as and points the
   wrong way. The binary patch mirrors it where `src/caret.js` already does, in

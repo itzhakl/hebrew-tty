@@ -1,0 +1,24 @@
+{
+ "samples": [
+  {
+   "logical": "2.1.243-rtl נמחק ו-360MB חזרו",
+   "painted": "ורזח 360MB-ו קחמנ rtl-2.1.243"
+  },
+  {
+   "logical": "npm test עובר, 654 בדיקות",
+   "painted": "תוקידב 654 ,רבוע npm test"
+  },
+  {
+   "logical": "src/caret.js:275 כבר עושה את זה",
+   "painted": "הז תא השוע רבכ src/caret.js:275"
+  },
+  {
+   "logical": "הקובץ נמחק ו-360 מגה-בייט חזרו",
+   "painted": "ורזח טייב-הגמ 360-ו קחמנ ץבוקה"
+  },
+  {
+   "logical": "The file was deleted and only שלום remains",
+   "painted": "The file was deleted and only םולש remains"
+  }
+ ]
+}
