@@ -235,6 +235,61 @@ Known limitation: mouse selection and link hovering use unshifted columns, so on
 a right-aligned row they address the wrong cells. Drop `--align` to turn this
 off while keeping the caret fix.
 
+## Outside the editor: patching Claude Code itself
+
+Everything above patches the editor, so it only helps inside the VS Code /
+VSCodium terminal. In Ptyxis, Alacritty, tmux or over ssh the renderer is
+someone else's, and there is nothing there to patch.
+
+The fix can go one level down instead — into Claude Code, which is where the
+reordering already happens:
+
+```sh
+claude-rtl              # takes the same arguments as claude
+```
+
+The first run derives a patched build from whichever version `claude` points
+at and caches it beside the original:
+
+```
+~/.local/share/claude/versions/2.1.243        untouched
+~/.local/share/claude/versions/2.1.243-rtl    what claude-rtl runs
+```
+
+That costs about ten seconds, once per Claude version. Nothing is overwritten,
+nothing needs root, and Claude's own updater keeps working — the next run after
+an upgrade simply rebuilds.
+
+Claude Code only reorders when it believes the terminal will not: it looks for
+`WT_SESSION` or `TERM_PROGRAM=vscode`. Herdr sets `WT_SESSION`, so nothing
+extra is needed there; a bare terminal needs one of the two exported.
+
+### How it survives an upgrade
+
+The executable is a Bun single-file bundle whose module graph is addressed by
+byte offsets, so the embedded JS must keep its exact length. Bytes to grow by
+are borrowed from equivalent-but-shorter constructs — `(x)=>` is `x=>` — inside
+the same module.
+
+The minifier renames every local on each build, so `tools/patch-binary.py`
+matches no name at all. Each site is found by the shape of its code and the
+names are read back out of the match: 2.1.241 calls the row painter `MHS` and
+2.1.243 calls it `BD`, and neither name appears anywhere in the patcher.
+`test/binary.js` checks the anchors against code recorded from both.
+
+2.1.243 also split the bundle into per-module chunks, and the chunk holding the
+row painter has only a few hundred spare bytes — less than the caret map alone
+needs. So the map is placed in whichever chunk has room and reached through
+`globalThis`, with the logical column as a fallback if that chunk never loads.
+
+### Scope
+
+Right-aligns rows whose base direction is RTL and maps the caret onto them,
+including the column past the rightmost glyph that the line's logical start
+needs. A row that starts in Latin script keeps its LTR base direction, so a
+line like `abc שלום` is left alone and its caret is not corrected. Mirroring
+and copy-as-logical-text are editor-side only.
+
 ## Hebrew dictation (opt in)
 
 Claude Code's CLI has its own `/voice` mode. It records the microphone itself and

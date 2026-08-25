@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Run Claude Code with RTL rows right-aligned and the caret on the glyph it is
+# editing, without touching the installed binary.
+#
+# The patched build is derived from whichever version `claude` points at now
+# and cached beside it, so a Claude upgrade costs one rebuild on the next run
+# rather than a reinstall. The original executable is never written to.
+set -euo pipefail
+
+here="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+patcher="$here/../tools/patch-binary.py"
+
+claude="$(command -v claude || true)"
+if [ -z "$claude" ]; then
+  echo "claude-rtl: no claude on PATH" >&2
+  exit 1
+fi
+
+# `claude` may already point at a patched build; always derive from the stock one.
+base="$(readlink -f "$claude")"
+base="${base%-rtl}"
+out="$base-rtl"
+
+if [ ! -x "$out" ] || [ "$base" -nt "$out" ]; then
+  echo "claude-rtl: building $(basename "$out")" >&2
+  python3 "$patcher" "$base" "$out" >&2
+fi
+
+exec "$out" "$@"
