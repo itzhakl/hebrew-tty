@@ -76,7 +76,11 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
 - A chunk with room is not a chunk that runs. The payload reached through
   `globalThis` is dead unless its chunk is instantiated, and nothing says so
   out loud: the caret map just falls back to the logical column. Prefer an
-  edit that pays for itself where it sits.
+  edit that pays for itself where it sits. A chunk no other module names in a
+  `from"..."` is never instantiated - one reached only by `import()` took the
+  whole payload with it once, and every helper silently did nothing. The
+  payload also goes in as **one** blob: splitting it across two chunks left
+  the renderer painting an empty screen.
 - Copying returns the logical text, so copy and paste round trip. A line that
   reorders to itself, or whose recovery does not verify, is copied verbatim -
   never guessed at.
@@ -103,6 +107,16 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
   edge tears the table in half. The rule is `src/caret.js`'s `LAYOUT`, and the
   binary patch reads the same range off the same pass. The prompt input row
   carries no box drawing - its rules are rows of their own - so it still aligns.
+- A table row is not a paragraph. Every cell in it is. Reordering the row in
+  one go carries the column rules along with the text, so the borders move,
+  the cells land under the wrong headings, and a row whose cells are mostly
+  Latin keeps an order the row above it does not. The binary patch cuts the
+  row at every vertical rule and reorders each piece against itself, leaving
+  the rules where they were - the same rule the editor patch applies to a
+  multiplexer's panes, one level down. Such a row carries no levels
+  afterwards, so bidi rule L4 does not reach a bracket inside a table cell,
+  and `src/caret.js` cannot verify its recovery either: the caret falls back
+  to the logical column there and copying hands the row back verbatim.
 - A rebuild never happens in front of the user. An upgrade is found by the
   next launch, which runs the stock binary and leaves the patcher working
   behind it; the launch after that is the patched one. Waiting eighteen

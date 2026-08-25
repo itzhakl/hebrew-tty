@@ -61,10 +61,15 @@ SHRINK = [
     # Only a bare name: `a.b.length===0` would need the whole member chain.
     (re.compile(rb'(?<![.\w$])(\w+)\.length===0'), lambda m: b"!" + m.group(1) + b".length"),
     (re.compile(rb'(?<![.\w$])(\w+)!==void 0&&\1(<=|>=|<|>)'), lambda m: m.group(1) + m.group(2)),
+    # `typeof` yields a string, so === against a string literal is ==.
+    (re.compile(rb'(typeof [\w.$]{1,24})===("[a-z]{3,9}")'),
+     lambda m: m.group(1) + b"==" + m.group(2)),
+    (re.compile(rb'(typeof [\w.$]{1,24})!==("[a-z]{3,9}")'),
+     lambda m: m.group(1) + b"!=" + m.group(2)),
 ]
 
 D, P, M, W, S, I, RQ = b"$rd_", b"$rp_", b"$rm_", b"$rw_", b"$rs_", b"$ri_", b"$rq_"
-RN, RF = b"$rn_", b"$rf_"
+RN, RF, RT = b"$rn_", b"$rf_", b"$rt_"
 
 
 def find(buf, key):
@@ -111,7 +116,7 @@ def host_of(spans, off):
 
 def derive(buf, check=False):
     if check:
-        for ident in (D, P, M, W, S, I, RQ, RN, RF):
+        for ident in (D, P, M, W, S, I, RQ, RN, RF, RT):
             if ident in buf:
                 sys.exit(f"identifier {ident.decode()} is already taken")
     d = {k: find(buf, k) for k in SITES}
@@ -132,6 +137,21 @@ def derive(buf, check=False):
     if seg is None:
         sys.exit("segments variable not found")
     d["segments"] = seg.group(1)
+
+    # The call itself, so the reorder can be handed a row one cell at a time.
+    at = sig.start() + seg.end() - 1
+    depth, i = 0, at
+    while i < row_start:
+        if buf[i:i + 1] == b"(":
+            depth += 1
+        elif buf[i:i + 1] == b")":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    if depth != 0:
+        sys.exit("reorder call not balanced")
+    d["call"] = (sig.start() + seg.end() - len(d["reorder"]) - 1, i + 1, buf[at + 1:i])
     return d
 
 
@@ -164,6 +184,35 @@ def base_dir():
     )
 
 
+def per_cell():
+    """A table row is not a paragraph. Every cell in it is.
+
+    Claude reorders a painted row in one go, so a row of table cells is laid
+    out as one sentence: the column rules travel with the text, the cells land
+    under the wrong headings, and a row whose cells are mostly Latin keeps an
+    order the row above it does not. This is the rule the editor patch already
+    applies to a multiplexer's panes, one level down - the row is cut at every
+    vertical rule and each piece is reordered against itself, while the rules
+    themselves stay where they were. That is what holds the borders still.
+
+    Such a row is never flushed right, so it needs no permutation, and it
+    carries no levels either: bidi rule L4 reads those, so a bracket inside a
+    table cell keeps the glyph it was typed as. Paying 90 bytes of payload for
+    that would cost the whole helper its place in the one chunk with room.
+    """
+    return (
+        b"globalThis." + RT + b"=function(f,s){"
+        b'var V="\\u2502",n=s.length,i,h=0;'
+        b"for(i=0;i<n;i++)if(s[i].value===V){h=1;break}"
+        b"if(!h)return f(s);"
+        b"var o=[],a=0;"
+        b"for(i=0;i<=n;i++){if(i<n&&s[i].value!==V)continue;"
+        b"if(i>a)o.push.apply(o,f(s.slice(a,i)));"
+        b"if(i<n)o.push(s[i]);a=i+1}"
+        b"return o};"
+    )
+
+
 def line_pass():
     """One walk of a reordered line: bidi rule L4, and whether it is a layout row.
 
@@ -179,7 +228,7 @@ def line_pass():
     return (
         b"globalThis." + RN + b"=function(" + S + b"){"
         b"if(" + S + b".RM||!" + S + b".RL)return;" + S + b".RM=1;"
-        b'var B="()[]{}<>\\u00ab\\u00bb\\u2039\\u203a",'
+        b'var B="()[]{}<>",'
         b"L=/[\\u2500-\\u259f\\u2800-\\u28ff]/,V=0;"
         b"for(var " + I + b"=0;" + I + b"<" + S + b".length;" + I + b"++){"
         b"var c=" + S + b"[" + I + b"].value;"
@@ -254,6 +303,9 @@ def edits(d):
          + start + b",r:" + logical + b",P:" + seg + b".RP,S:" + seg + b",L:" + seg
          + b".RL}}else " + M + b"[" + row_idx + b"]=0;let " + cell + b"={char:\" \""),
         # Falls back to the logical column if the caret map's chunk is not loaded.
+        (d["call"][0], d["call"][1],
+         b"(globalThis." + RT + b"??((f,x)=>f(x)))(" + d["reorder"] + b","
+         + d["call"][2] + b")"),
         (d["flush"][0], d["flush"][1],
          b"{x:(globalThis." + RQ + b"??((a,b)=>b))(" + y + b"," + k + b".x+" + t
          + b".relativeX),y:" + y + b"}"),
@@ -343,35 +395,38 @@ def main():
     print(f"reorder {d['reorder'].decode()}, segments {d['segments'].decode()}, "
           f"painter in {row_chunk[2]}, flush in {flush_chunk[2]}")
 
-    # 1. The caret map goes wherever there is room, reached through globalThis.
-    # Its own chunk is the last resort: on 2.1.243 the painter's chunk has only
-    # a few hundred spare bytes and the map alone is larger than that.
-    body = caret_map() + line_pass() + base_dir()
-    others = [s for s in spans if not (s[0] <= d["row"][0] < s[1]) and s[1] - s[0] >= 100_000]
-    others.sort(key=lambda s: s[1] - s[0], reverse=True)
+    # 1. The payload goes wherever there is room, reached through globalThis.
+    # It is placed one helper at a time and spread over as many chunks as it
+    # takes: no single chunk has room for all of it, and a helper is
+    # self-contained, so where each one lands does not matter.
+    body = caret_map() + line_pass() + base_dir() + per_cell()
+    spans = chunks(buf)
+    # A chunk nothing imports statically is never instantiated, and a payload
+    # left in one is dead without saying so. `import()` does not count: the
+    # chunk that carried only a dynamic import took the whole payload with it
+    # and every helper silently fell back to doing nothing.
+    others = [c for c in spans
+              if not (c[0] <= d["row"][0] < c[1]) and c[1] - c[0] >= 100_000
+              and buf.count(b'from"/$bunfs/root/' + c[2].encode() + b'"') > 0]
+    others.sort(key=lambda c: c[1] - c[0], reverse=True)
 
     placed = None
     for lo, hi, name in others:
-        head = IMPORT_END.search(buf, lo, min(hi, lo + 5_000_000))
-        if head is None:
+        if IMPORT_END.search(buf, lo, min(hi, lo + 5_000_000)) is None:
             continue
         try:
             free_bytes(buf, lo, hi, len(body), [])
         except SystemExit:
             continue
-        placed = (lo, hi, name, "import")
+        placed = (lo, hi, name)
         break
     if placed is None:
-        placed = (row_chunk[0], row_chunk[1], row_chunk[2], "painter")
+        sys.exit(f"no imported chunk has room for {len(body)} bytes of payload")
 
-    lo, hi, name, where = placed
+    lo, hi, name = placed
     buf, freed = free_bytes(buf, lo, hi, len(body), [])
-    print(f"  caret map -> {name}: needs {len(body)}, freed {freed}")
-    if where == "import":
-        at = IMPORT_END.search(buf, lo, min(hi, lo + 5_000_000)).end()
-    else:
-        d2 = derive(buf)
-        at = d2["sig"][0]
+    print(f"  payload -> {name}: needs {len(body)}, freed {freed}")
+    at = IMPORT_END.search(buf, lo, min(hi, lo + 5_000_000)).end()
     buf = buf[:at] + body + b" " * (freed - len(body)) + buf[at:]
 
     # 2. Everything else is paid for inside the painter's own chunk.
