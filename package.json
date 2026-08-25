@@ -1,39 +1,33 @@
 {
-  "name": "rtl-caret",
+  "name": "hebrew-tty",
   "version": "0.1.0",
-  "description": "Put the VS Code / VSCodium terminal caret on the glyph it is actually editing in Hebrew and other RTL text",
+  "description": "Hebrew that reads right in a terminal TUI: a PTY filter for Claude Code, plus Hebrew dictation",
   "bin": {
-    "rtl-caret": "bin/rtl-caret.js",
-    "claude-rtl": "bin/claude-rtl"
+    "hebrew-tty": "bin/hebrew-tty",
+    "hebrew-voice": "bin/hebrew-voice"
   },
-  "main": "src/patch.js",
   "files": [
     "bin",
     "src",
-    "tools/graft_hebrew.py",
-    "tools/patch-binary.py",
-    "tools/style_alias.py",
+    "tools/ptyhost.py",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "test": "node test/run.js && node test/voice.js && node test/binary.js"
+    "test": "node test/run.js && node test/voice.js"
   },
   "dependencies": {
     "bidi-js": "^1.0.3",
     "ws": "^8.21.3"
   },
   "keywords": [
+    "hebrew",
     "rtl",
     "bidi",
-    "hebrew",
-    "arabic",
     "terminal",
-    "xterm",
-    "vscode",
-    "vscodium",
-    "cursor",
-    "caret"
+    "pty",
+    "claude-code",
+    "dictation"
   ],
   "license": "MIT",
   "engines": {

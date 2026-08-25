@@ -1,41 +1,38 @@
-# rtl-caret
+# hebrew-tty
 
-Patches xterm.js's WebGL renderer inside VS Code / VSCodium so the terminal
-caret lands on the glyph it is actually editing in Hebrew and other RTL text.
-Zero-dependency at runtime except `bidi-js`, which is inlined into the patch.
+Puts Hebrew back the way it was typed in a terminal TUI. Claude Code lays out
+its own rows before they reach the terminal, so Hebrew arrives already
+reordered, flushed to the wrong edge, with the caret away from the glyph it is
+editing. The program runs on a pty of its own and the rows are repaired on the
+wire - nothing is patched, and an upgrade of the program inside cannot break
+it. Zero-dependency at runtime except `bidi-js`, and `ws` for dictation.
 
 ## Layout
 
 | path                 | role                                                          |
 | -------------------- | ------------------------------------------------------------- |
-| `bin/rtl-caret.js`   | CLI: `status` / `install` / `uninstall` / `voice`, flag parsing |
-| `src/patch.js`       | finds editor bundles, builds the payload, patches/reverts them |
-| `src/caret.js`       | the injected logic: recovery, caret mapping, mirroring, shift  |
+| `bin/hebrew-tty`     | the filter: raw stdin, pass-through, resize; the transform hooks in one place |
+| `tools/ptyhost.py`   | gives the child a pty and takes the window size on fd 3        |
+| `src/caret.js`       | the row repair: recovery, caret mapping, mirroring, shift      |
+| `bin/hebrew-voice`   | dictation entry point                                          |
 | `src/voice/`         | Hebrew dictation: local `voice_stream` server, ElevenLabs Scribe or local Whisper |
 | `test/run.js`        | assertion runner over `test/fixtures/*.json`                   |
 | `test/voice.js`      | assertion runner for `src/voice/`                              |
-| `tools/*.py`         | pty probes that record the fixtures; not shipped runtime code  |
-| `tools/editor-probe.js` | drives a real patched editor over CDP; the only way to see the renderer |
-| `tools/patch-binary.py` | patches the Claude Code executable, for terminals that are not the editor |
-| `bin/claude-rtl`     | runs Claude Code from a patched build, rebuilding it in the background |
+| `tools/probe*.py`    | pty probes that record the fixtures; not shipped runtime code  |
 
 ## Commands
 
 ```sh
-npm test                              # the whole suite
-sudo node bin/rtl-caret.js install    # install from this checkout
-node bin/rtl-caret.js status          # what is patched, changes nothing
-node bin/rtl-caret.js voice -- claude # dictation, needs no install and no root
+npm test                        # the whole suite
+node bin/hebrew-tty claude      # run a program with its Hebrew repaired
+node bin/hebrew-voice serve     # dictation, needs no install and no root
 ```
-
-Install from the repo checkout, not a globally installed package. `sudo` loses
-`node` from PATH under nvm/fnm, so pass the full node path when needed.
 
 ## Invariants
 
-- `src/caret.js` is **embedded as text** into a third-party bundle. It must stay
-  ES5, IIFE-wrapped, and free of `require`. Non-ASCII characters in it must be
-  written as escapes — literals normalise on the way in.
+These are about the row repair itself. It reads nothing but the painted row -
+that is what lets it run outside the program instead of inside it.
+
 - The caret is never moved on a guess. Recovered logical text is reordered again
   and must equal the painted line exactly; otherwise the original column stands.
 - Reordering here skips bidi rule L4, because Claude Code skips it too. Use the
@@ -49,95 +46,39 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
   height, which a table border never does - and span, recovery and alignment
   all run inside one pane. Alignment flushes to the pane's right edge, never
   the screen's.
-- `src/patch.js` matches the bundle with regex anchors. Editor upgrades replace
-  the bundle, so a failed match means "skip", never a corrupt write. Writes are
-  atomic and always leave a backup.
-- Two bundles are patched, and the payload in both must carry the same flags:
-  the WebGL addon for the caret, mirroring and alignment, and xterm's core for
-  copying. Whichever loads first wins, and the rest is skipped by the guard.
-- `tools/patch-binary.py` must never match a minified name. Every site is found
-  by the shape of its code and the names are read back out of the match; the
-  same build renames them all. `test/binary.js` holds recordings from two
-  builds that share no identifier, and a pattern that stops resolving must fail
-  there rather than in a 340MB write.
-- The patched executable must keep its exact length — Bun addresses the module
-  graph by byte offsets — and bytes may only be moved inside one module. Since
-  2.1.243 that module is a chunk with a few hundred spare bytes, so the caret
-  map lives in whatever chunk has room and is reached through `globalThis`.
-  Falling back to the logical column is correct; throwing is not.
-- One row, one write op. Claude draws the prompt input as a single `<Text>`
-  until something wants part of it coloured; a highlight splits it into one
-  `<Text>` per run and Ink emits a write op per run. Reordering and alignment
-  are per op, so two RTL runs both flush to the right edge and the second
-  paints over the first. A line holding RTL is therefore kept out of the
-  highlighted renderer and loses its colouring, rather than the row being
-  reassembled after the fact. Dictation is the case that always hits this -
-  the interim transcript is a dim highlight for as long as the mic is open.
-- Where a module's bytecode sits is not where its source sits. Until 2.1.245
-  each module's constant pool followed its own source, so reading the layout
-  off the `file:///$bunfs/root/` strings in those pools happened to work -
-  off by one, unnoticed, because the name was only ever used to filter
-  candidates. 2.1.246 gathered every pool into one region ahead of every
-  source and the sites stopped landing in any span at all. Module boundaries
-  come from the source instead: a module opens with its `@bun @bytecode`
-  banner and ends at the NUL after it. Its name is read from the far side -
-  a module exports aliases carrying a suffix of its own, so the import
-  statement naming those aliases names the module, and having found one the
-  module is statically imported by construction. A span nobody imports stays
-  unnamed and is never offered the payload.
-- A chunk with room is not a chunk that runs. The payload reached through
-  `globalThis` is dead unless its chunk is instantiated, and nothing says so
-  out loud: the caret map just falls back to the logical column. Prefer an
-  edit that pays for itself where it sits. A chunk no other module names in a
-  `from"..."` is never instantiated - one reached only by `import()` took the
-  whole payload with it once, and every helper silently did nothing. The
-  payload also goes in as **one** blob: splitting it across two chunks left
-  the renderer painting an empty screen.
-- Copying returns the logical text, so copy and paste round trip. A line that
-  reorders to itself, or whose recovery does not verify, is copied verbatim -
-  never guessed at.
+- Copying is the terminal's, not ours. The terminal holds the screen and
+  copies what it painted, so a filter on the wire cannot hand back the logical
+  text the way an editor patch could. Recovery still verifies rather than
+  guesses; what it feeds is the caret and the repair, not the clipboard.
 - The base direction is decided by counting, not by the first strong
   character. Bidi rule P2 hands a whole line to whichever side opens it, so a
   Hebrew sentence beginning with a path, a flag or a version number lays out
-  left to right and its full stop lands on the wrong side. Both patches
-  resolve it off the same logical text: RTL when the Hebrew letters are not
-  outnumbered by the Latin ones, `auto` otherwise. `src/caret.js` still offers
-  `auto` as a second candidate, because a row painted by a build from before
-  this rule has to stay recognisable.
+  left to right and its full stop lands on the wrong side. It is resolved off the recovered text: RTL when the Hebrew letters are not
+  outnumbered by the Latin ones, `auto` otherwise. `auto` stays on as a second
+  candidate, because a row painted by a build from before this rule has to
+  stay recognisable.
 - A painted row does not name one logical text. `2.1.243-rtl` and
   `rtl-2.1.243` paint the same row, so recovery can return the other one and
   copying gives it back. It verifies rather than guesses, which is the
   guarantee; being the text that was typed is not.
 - Bidi rule L4 is ours to apply. Claude reorders without it, so a bracket that
   ends up inside an RTL run keeps the glyph it was typed as and points the
-  wrong way. The binary patch mirrors it where `src/caret.js` already does, in
-  one pass over the reordered line - and that array is cached per source line,
+  wrong way. It is mirrored in one pass over the reordered line - and that array is cached per source line,
   so the pass marks itself. Mirroring twice swaps every bracket back, which
   looks exactly like never having run.
-- A row carrying box drawing is not aligned, in either patch. The borders of a
+- A row carrying box drawing is not aligned. The borders of a
   table hold still because they hold no RTL, so flushing the cells to the right
-  edge tears the table in half. The rule is `src/caret.js`'s `LAYOUT`, and the
-  binary patch reads the same range off the same pass. The prompt input row
+  edge tears the table in half. The rule is `src/caret.js`'s `LAYOUT`. The prompt input row
   carries no box drawing - its rules are rows of their own - so it still aligns.
 - A table row is not a paragraph. Every cell in it is. Reordering the row in
   one go carries the column rules along with the text, so the borders move,
   the cells land under the wrong headings, and a row whose cells are mostly
-  Latin keeps an order the row above it does not. The binary patch cuts the
-  row at every vertical rule and reorders each piece against itself, leaving
-  the rules where they were - the same rule the editor patch applies to a
+  Latin keeps an order the row above it does not. The row is cut at every vertical rule and each piece reordered against
+  itself, leaving the rules where they were - the same rule that applies to a
   multiplexer's panes, one level down. Such a row carries no levels
   afterwards, so bidi rule L4 does not reach a bracket inside a table cell,
   and `src/caret.js` cannot verify its recovery either: the caret falls back
   to the logical column there and copying hands the row back verbatim.
-- A rebuild never happens in front of the user. An upgrade is found by the
-  next launch, which runs the stock binary and leaves the patcher working
-  behind it; the launch after that is the patched one. Waiting eighteen
-  seconds for Hebrew is worse than one session without it.
-- The patched build is a reflink clone with the changed blocks written back,
-  not a second copy. The patch holds the file's length and moves about a
-  megabyte, so that is what the build costs on disk instead of 370MB per
-  Claude version. Where reflinks are unavailable the clone is a real copy and
-  nothing else changes.
 
 ## Voice
 
@@ -184,7 +125,8 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
   `[1 byte type][4 byte big-endian length][payload]` so audio is never
   base64'd. It is started once and outlives every microphone press: loading
   the model costs about five seconds, which is not a price to pay per press.
-  The venv is `~/.local/share/rtl-caret/whisper-venv`, and CUDA comes from
+  The venv is `~/.local/share/rtl-caret/whisper-venv` (the path predates the rename and is
+  left alone: moving it costs a five second model reload for nothing), and CUDA comes from
   pip - the sidecar dlopens `site-packages/nvidia/*/lib` itself rather than
   making the caller set `LD_LIBRARY_PATH`.
 - **Whisper is PULL, Scribe is PUSH.** Whisper has no endpointer, so the local
@@ -224,7 +166,7 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
 - `noiseRatio` is not one number for every microphone. A headset hears speech
   ten times louder than its room; a laptop microphone with its gain wound up
   hears itself at 0.15 RMS with nobody in the room, and asking speech to beat
-  three times that asks for more than it produces. `rtl-caret voice levels`
+  three times that asks for more than it produces. `hebrew-voice levels`
   records without transcribing and reports both ends, which is the only way to
   tell "the room clears the bar" from "speech does not".
 - Calibration needs the real 20 ms wire frames. A caller handing over whole
@@ -233,10 +175,6 @@ Install from the repo checkout, not a globally installed package. `sudo` loses
 - The hypothesis loop skips a buffer whose tail has gone quiet: the speaker has
   stopped, the text would repeat the last one, and starting it now only makes
   the commit queue behind half a second of decoding.
-- `src/voice/` must stay out of the `install` path: `require` it lazily, so the
-  patch commands never load `ws`.
-- Ported from the `claude-code-hebrew` extension. Fixes belonging to both should
-  land there too.
 
 ## Tests
 
@@ -247,7 +185,14 @@ Every new behaviour needs a fixture-backed check in `test/run.js`.
 `src/voice/` has no pty recordings — the protocol is Claude's. `test/voice.js`
 drives the real server over a real socket with a scripted provider instead.
 
-## Known limitation
+## Known limitations
 
-Under `--align`, mouse selection and link hovering address unshifted columns.
-The flag stays; the fix is deferred.
+- Mouse selection and link hovering address unshifted columns wherever a row
+  is flushed to the right edge. Deferred.
+- Copying gives back the painted row, not the logical text. That is the
+  terminal's to decide and a filter on the wire cannot reach it.
+- Claude splits a row into one write op per coloured run, so a highlighted RTL
+  line arrives as two overlapping ops. Repairing them separately paints one
+  over the other. Dictation hits this every press - the interim transcript is
+  a dim highlight for as long as the microphone is open - and merging the ops
+  needs a screen model on this side.
