@@ -264,6 +264,16 @@ Claude Code only reorders when it believes the terminal will not: it looks for
 `WT_SESSION` or `TERM_PROGRAM=vscode`. Herdr sets `WT_SESSION`, so nothing
 extra is needed there; a bare terminal needs one of the two exported.
 
+To make it the default, point your shell at it rather than at the binary:
+
+```sh
+claude() { claude-rtl "$@"; }     # in ~/.bashrc or ~/.zshrc
+```
+
+A build whose anchors have moved costs the alignment, never the session:
+`claude-rtl` says so and runs the stock binary instead. Deleting that one line
+is the whole way back.
+
 ### How it survives an upgrade
 
 The executable is a Bun single-file bundle whose module graph is addressed by
