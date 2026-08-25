@@ -1,0 +1,60 @@
+#!/usr/bin/env node
+'use strict';
+
+/* Run a terminal program with its Hebrew put back the way it was typed.
+ *
+ *   hebrew-tty claude
+ *
+ * Nothing is patched. The program runs on a pty of its own and this process
+ * sits on the wire, so a Claude Code upgrade cannot break it and no licence
+ * is bent to make Hebrew read right.
+ *
+ * This is the transparent stage: bytes pass through untouched, which is what
+ * makes it worth running first. The only questions it can answer - does the
+ * program still see a real terminal, does resizing still work, does herdr
+ * still recognise the session - are the ones that decide whether the whole
+ * approach is possible at all.
+ */
+
+const path = require('path');
+const { spawn } = require('child_process');
+
+const argv = process.argv.slice(2);
+if (!argv.length || argv[0] === '--help') {
+  process.stdout.write('usage: hebrew-tty <command> [args...]\n');
+  process.exit(argv.length ? 0 : 1);
+}
+
+const host = path.join(__dirname, '..', 'tools', 'ptyhost.py');
+const child = spawn('python3', [host, ...argv], {
+  stdio: ['pipe', 'pipe', 'inherit', 'pipe'],
+});
+
+const control = child.stdio[3];
+
+function sendSize() {
+  const [cols, rows] = process.stdout.columns && process.stdout.rows
+    ? [process.stdout.columns, process.stdout.rows]
+    : [80, 24];
+  if (control.writable) control.write(`${rows} ${cols}\n`);
+}
+
+if (process.stdin.isTTY) process.stdin.setRawMode(true);
+process.stdin.resume();
+process.stdin.pipe(child.stdin);
+
+/* Every byte, unchanged. The transform hooks in here and nowhere else. */
+child.stdout.on('data', (chunk) => process.stdout.write(chunk));
+
+sendSize();
+process.stdout.on('resize', sendSize);
+
+/* The child owns the terminal now, so a Ctrl-C typed at it is already in the
+ * stream above; ours would only race with it. */
+process.on('SIGINT', () => {});
+
+child.on('exit', (code, signal) => {
+  if (process.stdin.isTTY) process.stdin.setRawMode(false);
+  process.stdin.pause();
+  process.exit(signal ? 128 : code === null ? 1 : code);
+});
