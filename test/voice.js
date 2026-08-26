@@ -706,6 +706,57 @@ async function testHealthAndAdoption() {
   await new Promise((r) => foreign.close(r));
 }
 
+/* The model is unloaded only after a quiet stretch, and any of the three things
+ * that mean "the user is back" must call the unload off. Real timings would put
+ * a ten-minute sleep in the suite, so idleUnloadMs is set to a few ticks - the
+ * clock the code reads is the one the config hands it. */
+async function testWhisperIdleUnload() {
+  const tick = () => new Promise((r) => setTimeout(r, 25));
+
+  // 1. quiet past the deadline unloads.
+  let proc = fakeSidecar();
+  let w = new WhisperProvider({ idleUnloadMs: 40 }, () => proc);
+  const p1 = w.createSession({ onInterim() {}, onError() {} });
+  proc.say(READY);
+  const s1 = await p1;
+  ok(w.proc !== null, 'the sidecar is up while dictating');
+  await s1.close();
+  ok(w.idleTimer !== null, 'closing the microphone arms the unload');
+  await tick(); await tick();
+  eq(w.proc, null, 'a quiet stretch unloads the model');
+
+  // 2. a new session inside the window keeps it loaded.
+  proc = fakeSidecar();
+  w = new WhisperProvider({ idleUnloadMs: 10000 }, () => proc);
+  const p2 = w.createSession({ onInterim() {}, onError() {} });
+  proc.say(READY);
+  const s2 = await p2;
+  await s2.close();
+  ok(w.idleTimer !== null, 'the unload is armed again');
+  const p3 = w.createSession({ onInterim() {}, onError() {} });
+  const s3 = await p3;
+  eq(w.idleTimer, null, 'pressing the microphone again cancels the unload');
+  ok(w.proc === proc, 'and the same loaded sidecar is reused - no reload');
+  await s3.close();
+  w._cancelIdle();
+
+  // 3. the opt-out is honoured, and is not raised by the one-minute floor.
+  proc = fakeSidecar();
+  w = new WhisperProvider({ idleUnloadMs: 0 }, () => proc);
+  const p4 = w.createSession({ onInterim() {}, onError() {} });
+  proc.say(READY);
+  await (await p4).close();
+  eq(w.idleTimer, null, 'idleUnloadMs 0 never arms an unload');
+  ok(w.proc === proc, 'and the model stays resident, as it always did');
+  await w.shutdown();
+
+  eq(config.normalizeWhisper({ idleUnloadMs: 5000 }).idleUnloadMs, 60000,
+    'a sub-minute idle window is raised to the floor');
+  eq(config.normalizeWhisper({ idleUnloadMs: 0 }).idleUnloadMs, 0,
+    'but 0 survives the floor as the explicit opt-out');
+  eq(config.normalizeWhisper({}).idleUnloadMs, 600000, 'ten minutes is the default');
+}
+
 // ---------- run ----------
 
 
@@ -877,6 +928,7 @@ async function main() {
   await testHealthAndAdoption();
   await testWhisperSession();
   await testWhisperSidecarFailureIsExplained();
+  await testWhisperIdleUnload();
 
   console.log(`voice: ${checks - failures}/${checks} checks passed`);
   if (failures) {

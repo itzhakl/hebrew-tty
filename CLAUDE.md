@@ -175,12 +175,20 @@ that is what lets it run outside the program instead of inside it.
 - The local engine is `provider: "whisper"` - faster-whisper in a Python
   sidecar (`whisper_sidecar.py`) behind a pipe, spoken to with
   `[1 byte type][4 byte big-endian length][payload]` so audio is never
-  base64'd. It is started once and outlives every microphone press: loading
-  the model costs about five seconds, which is not a price to pay per press.
+  base64'd. It outlives every microphone press: loading the model costs about
+  five seconds, which is not a price to pay per press.
   The venv is `~/.local/share/rtl-caret/whisper-venv` (the path predates the rename and is
   left alone: moving it costs a five second model reload for nothing), and CUDA comes from
   pip - the sidecar dlopens `site-packages/nvidia/*/lib` itself rather than
   making the caller set `LD_LIBRARY_PATH`.
+- **The model is resident, not immortal.** It is ~1.3 GB, and on a desktop that
+  dictates a few times a day the kernel swaps it out long before the next press
+  - so "stays loaded" was already costing a disk read without saving one.
+  `whisper.idleUnloadMs` (default ten minutes, `0` to opt out) ends the sidecar
+  after a quiet stretch; `_ensure()` reloads it on the next press. The window is
+  floored at a minute so it can never unload between two sentences of one
+  thought, and the timer is `unref`'d - a pending unload must never be the
+  reason a one-shot CLI run refuses to exit.
 - **Whisper is PULL, Scribe is PUSH.** Whisper has no endpointer, so the local
   energy VAD decides when an utterance ended and `endSegment()` returns the
   text; `onFinal` is never called. Wiring it as a push provider would commit
