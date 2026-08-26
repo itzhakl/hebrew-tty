@@ -20,6 +20,7 @@ it. Zero-dependency at runtime except `bidi-js`, and `ws` for dictation.
 | `test/voice.js`      | assertion runner for `src/voice/`                              |
 | `tools/probe*.py`    | pty probes that record the fixtures; not shipped runtime code  |
 | `tools/patch-binary.py` | patches the Claude Code executable; the Hebrew you see today comes from here, until the filter repairs rows itself |
+| `bin/hebrew-tty-build` | makes the patched build for whatever version `claude` points at; run in the background after an upgrade |
 
 ## Commands
 
@@ -27,6 +28,8 @@ it. Zero-dependency at runtime except `bidi-js`, and `ws` for dictation.
 npm test                        # the whole suite
 node bin/hebrew-tty claude      # run a program with its Hebrew repaired
 node bin/hebrew-voice serve     # dictation, needs no install and no root
+hebrew-tty-build                # make the patched build for the current version
+python3 tools/patch-binary.py --check <build>   # does that build repair Hebrew?
 ```
 
 ## Invariants
@@ -97,10 +100,17 @@ that is what lets it run outside the program instead of inside it.
   Too narrow and there is nothing left to shrink; too wide and the build stops
   starting. The widths are tried in order and the first whose result comes up
   is kept.
-- `--version` is not a check. The build that died on a stale bytecode offset
-  reported its version perfectly and then refused to start, because printing a
-  version touches a handful of modules and none of the edited ones. The
-  patcher starts the result on a pty and watches for the interface instead.
+- `--version` is not a check, and neither is starting. The build that died on
+  a stale bytecode offset reported its version perfectly and then refused to
+  start, because printing a version touches a handful of modules and none of
+  the edited ones. Worse, a build whose edits all landed in code the program
+  never runs starts and paints its interface exactly like a good one - every
+  call site falls back to doing nothing when its helper is missing. So the
+  patcher types Hebrew at the result on a pty and reads the last cursor
+  position back off the wire: near the right edge means the row was aligned,
+  near the left means nothing happened. That is `works()`, and a width that
+  does not pass it is not kept. `--check` runs the same question at a build
+  that already exists.
 - The first payment width that works is the one to keep, and it is not always
   the first tried. 2.1.246 runs out of slack at 200k and lands at 400k.
 - The payment regions nest, so each one is cut from a buffer that already
@@ -111,10 +121,16 @@ that is what lets it run outside the program instead of inside it.
   lowest-offset edit survives. Every region holds its length, which is what
   lets them be applied one at a time without moving an offset.
 - A build that starts is not a build that works. The one where six of seven
-  edits had been reverted booted, showed its interface and passed `boots()`,
-  because the payload was still injected and every call site fell back to
-  doing nothing by design. Count the `$r*_` markers in the result: a helper
-  that appears once is defined and never called.
+  edits had been reverted booted and showed its interface, because the payload
+  was still injected and every call site fell back to doing nothing by design.
+  Counting the `$r*_` markers catches that much - a helper that appears once
+  is defined and never called - but not the case where every marker is paired
+  and the code holding them is never reached. Only `works()` catches that.
+- 2.1.246 does not patch. Every edit resolves and lands, and the painter they
+  land in is never run: forcing its placement column to a constant, on the
+  unpatched binary, leaves the screen rendering normally. The row anchor has
+  to be moved onto whatever paints rows now. Until then the patcher produces
+  no build for it and the shell function stands on 2.1.245-rtl.
 
 ## Voice
 
