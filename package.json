@@ -10,11 +10,12 @@
     "bin",
     "src",
     "tools/ptyhost.py",
+    "tools/patch-binary.py",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "test": "node test/run.js && node test/voice.js"
+    "test": "node test/run.js && node test/voice.js && node test/binary.js"
   },
   "dependencies": {
     "bidi-js": "^1.0.3",

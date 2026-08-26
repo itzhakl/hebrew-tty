@@ -19,6 +19,7 @@ it. Zero-dependency at runtime except `bidi-js`, and `ws` for dictation.
 | `test/run.js`        | assertion runner over `test/fixtures/*.json`                   |
 | `test/voice.js`      | assertion runner for `src/voice/`                              |
 | `tools/probe*.py`    | pty probes that record the fixtures; not shipped runtime code  |
+| `tools/patch-binary.py` | patches the Claude Code executable; the Hebrew you see today comes from here, until the filter repairs rows itself |
 
 ## Commands
 
@@ -79,6 +80,30 @@ that is what lets it run outside the program instead of inside it.
   afterwards, so bidi rule L4 does not reach a bracket inside a table cell,
   and `src/caret.js` cannot verify its recovery either: the caret falls back
   to the logical column there and copying hands the row back verbatim.
+
+- `tools/patch-binary.py` must never match a minified name. Every site is
+  found by the shape of its code and the names are read back out of the
+  match; the same build renames them all. `test/binary.js` holds recordings
+  from three builds that share no identifier, and a pattern that stops
+  resolving must fail there rather than in a 250MB write.
+- The patched executable must keep its exact length, and since 2.1.246 that is
+  no longer enough: the bytecode addresses source by offset, so a function
+  whose text has moved is parsed from the wrong place and the boot dies on a
+  parameter list that is not there. Each edit is therefore paid for out of the
+  code that follows it, nearest first, and only the run in between shifts.
+  Paying from both sides of an edit, or pooling all seven edits into one
+  region, moves too much and 2.1.246 will not start.
+- How far an edit may reach for its payment is not a constant to reason about.
+  Too narrow and there is nothing left to shrink; too wide and the build stops
+  starting. The widths are tried in order and the first whose result comes up
+  is kept.
+- `--version` is not a check. The build that died on a stale bytecode offset
+  reported its version perfectly and then refused to start, because printing a
+  version touches a handful of modules and none of the edited ones. The
+  patcher starts the result on a pty and watches for the interface instead.
+- 2.1.245 no longer patches: every payment width either runs out of slack or
+  produces a build that will not start. The build already on disk still works,
+  so this is a regression to fix rather than a reason to keep the old code.
 
 ## Voice
 
