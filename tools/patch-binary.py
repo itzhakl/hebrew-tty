@@ -451,13 +451,15 @@ def pay_in_place(buf, plan, window):
     return work
 
 
-def boots(path):
-    """Start the build on a pty and watch for the TUI rather than a version.
+def works(path, cols=120, rows=40):
+    """Type Hebrew at the build and check the row was flushed to the right.
 
-    `--version` prints from a handful of modules and says nothing about the
-    rest of the graph: the build that died on a stale bytecode offset reported
-    its version perfectly and then refused to start. Only a real terminal
-    exercises the code this patch edits.
+    Starting is not working: every call site falls back to doing nothing when
+    its helper is missing, so a build whose edits all landed in code the
+    program never runs boots and paints its interface exactly like a good one.
+    The last cursor position the build paints after a Hebrew word is typed is
+    the difference - near the right edge when the row was aligned, near the
+    left when nothing happened.
     """
     import fcntl
     import pty
@@ -469,20 +471,28 @@ def boots(path):
     pid, fd = pty.fork()
     if pid == 0:
         os.execv(path, ["claude"])
-    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
-    seen, deadline = b"", time.time() + 60
-    while time.time() < deadline:
-        ready, _, _ = select.select([fd], [], [], 0.5)
-        if not ready:
-            continue
-        try:
-            chunk = os.read(fd, 65536)
-        except OSError:
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+    seen, mark, start, typed = b"", None, time.time(), False
+    while time.time() - start < 60:
+        ready, _, _ = select.select([fd], [], [], 0.4)
+        if ready:
+            try:
+                chunk = os.read(fd, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            seen += chunk
+        if b"could not start" in seen:
             break
-        if not chunk:
-            break
-        seen += chunk
-        if b"could not start" in seen or len(seen) > 4000:
+        if not typed and time.time() - start > 14:
+            # Clears a trust prompt if one is up; a no-op on an empty composer.
+            os.write(fd, b"\r")
+            time.sleep(0.5)
+            mark = len(seen)
+            os.write(fd, "\u05e9\u05dc\u05d5\u05dd \u05e2\u05d5\u05dc\u05dd".encode())
+            typed = True
+        if typed and time.time() - start > 26:
             break
     try:
         os.kill(pid, 15)
@@ -493,7 +503,15 @@ def boots(path):
     if b"could not start" in seen:
         print("  " + seen.decode(errors="replace").split("could not start")[1][:120].strip())
         return False
-    return len(seen) > 200
+    if mark is None or len(seen) < 200:
+        print("  no interface")
+        return False
+    at = [int(c) for _r, c in re.findall(rb"\x1b\[(\d+);(\d+)H", seen[mark:])]
+    if not at:
+        print("  the build painted no cursor position after the Hebrew")
+        return False
+    print(f"  caret column {max(at)} of {cols}")
+    return max(at) >= cols * 2 // 3
 
 
 def write_out(src, dst, buf):
@@ -592,6 +610,31 @@ def build(buf, window):
     return buf
 
 
+def check(path):
+    """Say whether a build that already exists is a working one.
+
+    Two questions, because either can fail on its own. Are the helpers
+    called - a `$r*_` that appears once is defined and never reached, which
+    is what a reverted edit leaves behind. And does the thing actually
+    align - which is the only question that survives an edit landing in code
+    the program never runs.
+    """
+    buf = open(path, "rb").read()
+    bad = []
+    for marker in (RQ, RN, RF, RT):
+        n = buf.count(marker)
+        state = "missing" if n == 0 else "defined, never called" if n < 2 else "called"
+        print(f"  {marker.decode():6} x{n:<3} {state}")
+        if n < 2:
+            bad.append(marker.decode())
+    if bad:
+        print(f"  {', '.join(bad)} never reached - the patch is in the file and dead")
+    aligned = works(os.path.abspath(path))
+    if bad or not aligned:
+        sys.exit("this build does not repair Hebrew")
+    print("  Hebrew is aligned and every helper is called")
+
+
 def main():
     src, dst = sys.argv[1], sys.argv[2]
     original = open(src, "rb").read()
@@ -606,11 +649,11 @@ def main():
         if len(buf) != len(original):
             sys.exit(f"length changed by {len(buf) - len(original)}")
         write_out(src, dst, buf)
-        if boots(os.path.abspath(dst)):
-            print(f"length held at {len(original)}, boots")
+        if works(os.path.abspath(dst)):
+            print(f"length held at {len(original)}, and Hebrew is aligned")
             return
     os.path.exists(dst) and os.remove(dst)
-    sys.exit("no payment width produced a build that starts")
+    sys.exit("no payment width produced a build with Hebrew aligned")
 
 
 def selftest(path):
@@ -655,5 +698,9 @@ def selftest(path):
 
 if len(sys.argv) == 3 and sys.argv[1] == "--selftest":
     selftest(sys.argv[2])
-else:
+elif len(sys.argv) == 3 and sys.argv[1] == "--check":
+    check(sys.argv[2])
+elif len(sys.argv) == 3:
     main()
+else:
+    sys.exit("usage: patch-binary.py <stock> <out> | --check <build> | --selftest <fixture>")
