@@ -401,7 +401,13 @@ def pay_in_place(buf, plan, window):
     plan = sorted(plan)
     spans = [(lo, hi) for lo, hi, _ in plan]
     mod_lo, mod_hi, name = host_of(chunks(buf), plan[0][0])
-    used, out, total, paid = [], [], 0, 0
+    used, reaches, total, paid = [], [], 0, 0
+    # A region reaches as far as its payment, which is further than the next
+    # edit: the regions nest. Each one is therefore cut from a buffer that
+    # already carries the edits above it, or applying them lowest-last would
+    # put back the code they replaced. Every region holds its length, so an
+    # offset found here stays valid after one is applied.
+    work = buf
 
     # Last edit first: each one claims the slack directly after itself before
     # an earlier one can reach past it and take it.
@@ -410,7 +416,7 @@ def pay_in_place(buf, plan, window):
         total += need
         picks = []
         for pattern, rewrite in SHRINK:
-            for m in pattern.finditer(buf, hi, hi + window):
+            for m in pattern.finditer(work, hi, hi + window):
                 if any(a < m.end() and m.start() < b for a, b in spans + used):
                     continue
                 shrunk = rewrite(m)
@@ -433,15 +439,16 @@ def pay_in_place(buf, plan, window):
 
         parts = sorted([(lo, hi, text)] + [(a, b, t) for a, b, t, _ in chosen])
         start, end = parts[0][0], parts[-1][1]
-        body = bytearray(buf[start:end])
+        body = bytearray(work[start:end])
         for a, b, t in reversed(parts):
             body[a - start:b - start] = t
-        out.append((start, end, bytes(body) + b" " * (end - start - len(body))))
+        body = bytes(body) + b" " * (end - start - len(body))
+        work = work[:start] + body + work[end:]
         used.append((start, end))
+        reaches.append(end - start)
 
-    reach = max(end - start for start, end, _ in out)
-    print(f"  {name}: needs {total}, paid {paid}, widest shift {reach} bytes")
-    return out
+    print(f"  {name}: needs {total}, paid {paid}, widest shift {max(reaches)} bytes")
+    return work
 
 
 def boots(path):
@@ -566,13 +573,21 @@ def build(buf, window):
 
     # 2. The painter's edits, each paid for in the bytes right after it.
     d = derive(buf)
-    for lo, hi, text in sorted(pay_in_place(buf, edits(d), window), reverse=True):
-        buf = buf[:lo] + text + buf[hi:]
+    plan = edits(d)
+    buf = pay_in_place(buf, plan, window)
 
     # 3. The input renderer lives in a module of its own and pays for itself
     #    there, by the same rule.
-    for lo, hi, text in sorted(pay_in_place(buf, [one_run(buf)], window), reverse=True):
-        buf = buf[:lo] + text + buf[hi:]
+    tail = one_run(buf)
+    buf = pay_in_place(buf, [tail], window)
+
+    # An edit that a later region put back leaves a build that still starts:
+    # the payload is injected and every call site is written to do nothing
+    # when its helper is missing. Nothing downstream would notice, so the
+    # edits are read back here.
+    for _lo, _hi, text in plan + [tail]:
+        if buf.count(text) != 1:
+            sys.exit(f"an edit is not in the result: {text[:60]!r}")
 
     return buf
 
