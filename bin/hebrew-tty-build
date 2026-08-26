@@ -15,6 +15,12 @@ set -euo pipefail
 here="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 patcher="$here/../tools/patch-binary.py"
 
+force=0
+if [ "${1:-}" = "--force" ]; then
+  force=1
+  shift
+fi
+
 claude="${1:-$HOME/.local/bin/claude}"
 if [ ! -e "$claude" ]; then
   echo "hebrew-tty-build: no claude at $claude" >&2
@@ -31,6 +37,17 @@ if [ -x "$out" ] && [ ! "$base" -nt "$out" ]; then
   exit 0
 fi
 
+# A version the patcher cannot align does not become one on the next try, and
+# this runs from every new shell. Without a record of the failure each of them
+# starts the same seven minute build again. The record is the stock binary's
+# own size and mtime, so an upgrade clears it by not matching.
+failed="$out.failed"
+stamp="$(stat -c '%s %Y' "$base")"
+if [ "$force" = 0 ] && [ -f "$failed" ] && [ "$(cat "$failed")" = "$stamp" ]; then
+  echo "hebrew-tty-build: $(basename "$base") is known not to patch; --force to retry" >&2
+  exit 0
+fi
+
 # mkdir is the atomic part; a lock left behind by a killed build would
 # otherwise mean no rebuild ever happens again.
 lock="$out.building"
@@ -44,13 +61,16 @@ if ! mkdir "$lock" 2>/dev/null; then
     exit 0
   fi
 fi
-trap 'rm -rf "$lock"' EXIT
+# A killed build must not leave a quarter of a gigabyte behind either.
+trap 'rm -rf "$lock" "$out.new"' EXIT
 
 if python3 "$patcher" "$base" "$out.new"; then
   mv -f "$out.new" "$out"
+  rm -f "$failed"
   echo "hebrew-tty-build: $(basename "$out")"
 else
   rm -f "$out.new"
+  echo "$stamp" > "$failed"
   echo "hebrew-tty-build: $(basename "$base") did not patch" >&2
   exit 1
 fi
