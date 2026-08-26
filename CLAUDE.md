@@ -101,9 +101,20 @@ that is what lets it run outside the program instead of inside it.
   reported its version perfectly and then refused to start, because printing a
   version touches a handful of modules and none of the edited ones. The
   patcher starts the result on a pty and watches for the interface instead.
-- 2.1.245 no longer patches: every payment width either runs out of slack or
-  produces a build that will not start. The build already on disk still works,
-  so this is a regression to fix rather than a reason to keep the old code.
+- The first payment width that works is the one to keep, and it is not always
+  the first tried. 2.1.246 runs out of slack at 200k and lands at 400k.
+- The payment regions nest, so each one is cut from a buffer that already
+  carries the edits above it. An edit reaches past the next edit to find its
+  slack - at 400k a region runs 335KB - so the seven regions contain one
+  another. Emitting them against the unedited buffer and applying them
+  lowest-last puts back the code the higher edits replaced: only the
+  lowest-offset edit survives. Every region holds its length, which is what
+  lets them be applied one at a time without moving an offset.
+- A build that starts is not a build that works. The one where six of seven
+  edits had been reverted booted, showed its interface and passed `boots()`,
+  because the payload was still injected and every call site fell back to
+  doing nothing by design. Count the `$r*_` markers in the result: a helper
+  that appears once is defined and never called.
 
 ## Voice
 
