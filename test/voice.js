@@ -710,6 +710,22 @@ async function testHealthAndAdoption() {
  * that mean "the user is back" must call the unload off. Real timings would put
  * a ten-minute sleep in the suite, so idleUnloadMs is set to a few ticks - the
  * clock the code reads is the one the config hands it. */
+/* keyterms is one list in voice.json and two wires out of it: Scribe takes it
+ * as repeated query parameters, Whisper as a decoder prompt. The list reaching
+ * only the cloud engine is the bug this guards - it looks configured and does
+ * nothing. */
+function testWhisperHotwords() {
+  const cfg = config.load({ provider: 'whisper', keyterms: ['git', 'npm', 'hebrew-tty'] }, {}, path.join(os.tmpdir(), 'no-such-voice.json'));
+  const provider = cli.buildProvider(cfg, () => {});
+  const sent = provider.sidecarOptions();
+  eq(sent.hotwords.join(','), 'git,npm,hebrew-tty', 'keyterms reach the sidecar as hotwords');
+
+  const none = cli.buildProvider(config.load({ provider: 'whisper' }, {}, path.join(os.tmpdir(), 'no-such-voice.json')), () => {});
+  eq(none.sidecarOptions().hotwords.length, 0, 'no keyterms means no prompt, not an empty one');
+  console.log('whisper hotwords: keyterms reach the local decoder too');
+  console.log(`  ${sent.hotwords.length} terms forwarded`);
+}
+
 async function testWhisperIdleUnload() {
   const tick = () => new Promise((r) => setTimeout(r, 25));
 
@@ -929,6 +945,7 @@ async function main() {
   await testWhisperSession();
   await testWhisperSidecarFailureIsExplained();
   await testWhisperIdleUnload();
+  testWhisperHotwords();
 
   console.log(`voice: ${checks - failures}/${checks} checks passed`);
   if (failures) {
