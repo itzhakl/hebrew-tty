@@ -722,7 +722,24 @@ function testWhisperHotwords() {
 
   const none = cli.buildProvider(config.load({ provider: 'whisper' }, {}, path.join(os.tmpdir(), 'no-such-voice.json')), () => {});
   eq(none.sidecarOptions().hotwords.length, 0, 'no keyterms means no prompt, not an empty one');
-  console.log('whisper hotwords: keyterms reach the local decoder too');
+
+  // The style prompt is the stronger of the two and does a different job:
+  // hotwords names terms, this names how they are written. Measured on one
+  // recording, it fixed "dev" and "deployment" - neither of them in any list.
+  ok(sent.initialPrompt.length > 0, 'a style prompt ships by default');
+  ok(/[a-z]/.test(sent.initialPrompt) && /[\u0590-\u05ff]/.test(sent.initialPrompt),
+    'the style prompt is code-switched, which is the whole point of it');
+  const blank = cli.buildProvider(
+    config.load(
+      { provider: 'whisper', whisper: { initialPrompt: '  ' } },
+      {},
+      path.join(os.tmpdir(), 'no-such-voice.json')
+    ),
+    () => {}
+  );
+  eq(blank.sidecarOptions().initialPrompt, '', 'a blank style prompt is an absence, not an empty prompt');
+
+  console.log('whisper hotwords: keyterms and the style prompt reach the local decoder');
   console.log(`  ${sent.hotwords.length} terms forwarded`);
 }
 
