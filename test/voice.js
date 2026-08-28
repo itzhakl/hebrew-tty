@@ -738,6 +738,9 @@ function testWhisperHotwords() {
     () => {}
   );
   eq(blank.sidecarOptions().initialPrompt, '', 'a blank style prompt is an absence, not an empty prompt');
+  eq(blank.sidecarOptions().partialModel, '', 'no second model unless one is named');
+  eq(new WhisperProvider({ partialModel: 'a/b' }, () => fakeSidecar()).sidecarOptions().partialModel, 'a/b',
+    'the hypothesis model reaches the sidecar');
 
   console.log('whisper hotwords: keyterms and the style prompt reach the local decoder');
   console.log(`  ${sent.hotwords.length} terms forwarded`);
@@ -855,6 +858,8 @@ function testWhisperConfig() {
   eq(config.normalizeWhisper({}).vadFilter, true, 'Silero is on by default');
   eq(config.normalizeWhisper({ vadFilter: 'false' }).vadFilter, false, 'a string boolean turns Silero off');
   eq(config.normalizeWhisper('nonsense').partialBeamSize, 1, 'a non-object whisper block falls back wholesale');
+  eq(config.normalizeWhisper({}).partialModel, '', 'one model does both jobs unless a second is named');
+  eq(config.normalizeWhisper({ partialModel: '  a/b  ' }).partialModel, 'a/b', 'the hypothesis model is trimmed');
 
   eq(cli.buildProvider(w).id, 'whisper', 'the whisper provider is built');
   // No credential is involved, so a missing one must not fail the way it does
