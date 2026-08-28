@@ -215,6 +215,27 @@ that is what lets it run outside the program instead of inside it.
 - The encoder cost is flat: the mel is padded to thirty seconds, so twelve
   seconds of speech costs the same ~470 ms as one. Segment length is not a
   latency knob; `partialMs` and `endpointMs` are.
+- Nothing is on screen until the first hypothesis lands, so what the user calls
+  slowness is that one number: the audio the hypothesis waits to accumulate,
+  plus one decode. The commit's own decode is not felt - the last hypothesis is
+  already painted by the time it runs, and it is what carries the words spoken
+  after that hypothesis started. Committing the last hypothesis instead would
+  drop the end of every sentence.
+- `endpointMs` is not free to shorten. At 350 ms an ordinary gap between two
+  words ended the sentence: the buffer was emptied, the hypothesis started over,
+  and the first text arrived 500 ms LATER than at 450. A commit of zero
+  characters in the log is that, and it costs more than the shorter endpoint
+  saves.
+- A hypothesis is allowed on less audio than a commit - `MIN_PARTIAL_BYTES`,
+  0.2 s against the commit's 0.5. Half a second of floor is half a second of
+  talking to a screen that has not moved, and a bad hypothesis is replaced.
+- **The second model is a knob with nothing to put in it.** `whisper.partialModel`
+  runs hypotheses on a small model while the commit stays accurate - measured,
+  `faster-whisper-small` hypothesises in 137 ms against the turbo's 550. It is
+  off because no small Hebrew model exists: every ivrit-ai release is large, and
+  a multilingual small invents Hebrew. `medium` does not fit beside the turbo on
+  a 4 GB card. Quantising a second copy is not the way round it either - int8
+  buys 13% (467 ms against 535), not a second channel.
 - **A fixed energy threshold does not survive a real microphone.** At 0.005 a
   quiet room already reads as speech, so silence never arrives, nothing ever
   commits, and dictation only lands when the key is released - which looks like
