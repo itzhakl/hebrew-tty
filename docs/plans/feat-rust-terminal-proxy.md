@@ -49,3 +49,69 @@
 - Q: Which operating systems must the first release support? → A: Linux/Ptyxis first, with portable architecture boundaries (option A).
 - Q: What should happen when the engine cannot determine confidently whether text already passed through BiDi? → A: Pass through safely by default, with configuration overrides (option A plus configuration).
 - Q: What must the first release include beyond correct RTL display? → A: Display, wrapping, alignment, streaming, resize, and especially correct caret placement on input text (option A).
+
+## Plan
+
+**Done means:** one Linux Rust PTY proxy, invoked directly or by the linked Herdr plugin, measures and classifies Claude Code, Pi, and Codex execution paths, applies at most one verified per-row BiDi layout, preserves right alignment and caret coordinates through streaming, wrapping, and resize, and passes ambiguous output through unchanged with diagnostics and command overrides. [G1, G2, A1, A2, D2, D3, D4]
+
+**Out of scope:**
+- macOS and Windows PTY implementations are deferred behind the platform interface. [NG1, D2]
+- Mouse coordinates, terminal selection, and clipboard reconstruction are not changed. [NG2, D4]
+- Herdr core and its renderer are not modified; a render-hook proposal remains deferred. [NG3, Q2, D1]
+- Unverified output is not transformed in `auto` mode. [NG4, D3]
+
+**Epic:** standalone Rust terminal rendering proxy with Herdr launch integration [G1, S1, S2] · **Blocked by:** none [C1, C2, D1]
+
+## Requirements
+
+| # | requirement | how it is proven | state |
+|---|-------------|------------------|-------|
+| 1 | Direct and Herdr-hosted Claude Code, Pi, and Codex recordings identify logical/visual order and pre-/post-wrap behavior before transformation code is enabled. [S3, A1, V1] | `cargo test --test measurements` against probe-recorded fixtures, plus `python3 tools/terminal_proxy_probe.py verify test/fixtures/terminal-proxy/measurements` | failing |
+| 2 | At supported widths, Hebrew and mixed Hebrew/English/code retain logical top-to-bottom wrapped-row order, readable per-row display order, and pane-right alignment. [G1, D4, V2] | `cargo test --test screen_layout` | failing |
+| 3 | The caret coordinate stays attached to the edited grapheme through typing, horizontal/vertical movement, streamed replacement, wrapping, and resize. [G2, D4, V3] | `cargo test --test caret_mapping` and `tools/smoke-ptyxis.sh` | failing |
+| 4 | `auto` leaves unclassified and ambiguous output byte-for-byte unchanged with a diagnostic, while `logical`, `visual`, and `passthrough` overrides produce their specified paths. [A2, D3, V4] | `cargo test --test safe_modes` | failing |
+| 5 | Direct CLI launch and the three linked Herdr actions start Claude Code, Pi, and Codex through the same Rust executable. [G1, S2, D1, V5] | `cargo test --test cli` and `tools/verify-herdr-plugin.sh` | failing |
+
+## Files and interfaces
+
+- `Cargo.toml` and `Cargo.lock` — define the `hebrew-tty` Rust binary and pin PTY, VT parsing, Unicode BiDi, grapheme, width, TOML, serialization, error, and CLI dependencies for the Linux-first proxy. [S1, D2]
+- `src/main.rs` and `src/cli.rs` — replace the shipped Node entry path with `hebrew-tty [--mode auto|logical|visual|passthrough] [--diagnostics PATH] [--as NAME] <command> [args...]`, load configuration, select the command policy, and run the proxy. [S1, A2, D2]
+- `src/config.rs` — expose `Config::load`, `CommandPolicy`, and `Mode`; read versioned XDG TOML defaults plus command-specific overrides, with CLI values taking precedence. [A2, Q1]
+- `src/platform/mod.rs` and `src/platform/linux.rs` — define `PtyHost::{spawn, resize, read, write, wait}` plus `WindowSize`; the Linux implementation owns the child session, controlling PTY, signal forwarding, raw-mode restoration, and optional argv0 used by Herdr process recognition. [S1, D2]
+- `src/terminal.rs` — expose `TerminalModel::{feed, resize, take_dirty_rows, cursor}` over VT screen state; retain cell text, style, width/continuation state, cursor state, pane separators, and physical row boundaries without treating a buffer row as a paragraph. [S1, G2, D4]
+- `src/classify.rs` — expose `Classifier::observe` and `ExecutionPath { order, wrapping, confidence, evidence }`; match only probe-verified command/host behavior and return `Unknown` for incomplete or contradictory evidence. [C3, A1, A2, D3]
+- `src/layout.rs` — expose `layout_row(RowSnapshot, ExecutionPath, Mode) -> LayoutResult`; recover verified logical content where needed, resolve one per-row BiDi permutation, wrap before per-row display ordering, right-align inside pane bounds, and return the logical↔visual grapheme coordinate map consumed by both painting and caret placement. [C3, S1, D4, V2, V3]
+- `src/render.rs` — expose `Renderer::repaint`; emit terminal mode setup and minimal dirty-row cursor/style writes, restore the mapped caret after each batch, and repaint all affected rows after resize/reflow. [S1, G2, D4]
+- `src/diagnostics.rs` — emit structured records containing command, host, classification evidence, selected mode, row disposition, and safe-mode reason without changing the rendered stream. [A2, D3, V1, V4]
+- `bin/hebrew-tty` — become a compatibility launcher for the built/installed Rust binary so the existing command name remains the direct entry point. [C1, G1, S1]
+- `tools/ptyhost.py` — retire from the runtime path after parity tests establish Rust PTY transport, while leaving history-driven probe tooling independent of the shipped binary. [C1, S1, D2]
+- `tools/terminal_proxy_probe.py` — record raw child PTY output, input events, sizes, resize events, cursor reports, host path, and expected classification for each supported agent without screenshots. [S3, A1, V1]
+- `test/fixtures/terminal-proxy/measurements/*.json` — store probe-recorded direct and Herdr-hosted Claude Code, Pi, and Codex measurements at fixed widths; these fixtures are created before layout implementation and are never hand-authored. [S3, A1, V1]
+- `test/fixtures/terminal-proxy/screens/*.json` — store deterministic VT event streams and expected rows/caret positions for Hebrew-only, mixed-direction/code, streaming, wrapping, resize, ambiguous, and override cases derived from the measured paths. [V2, V3, V4]
+- `tests/measurements.rs`, `tests/screen_layout.rs`, `tests/caret_mapping.rs`, `tests/safe_modes.rs`, and `tests/cli.rs` — provide focused integration boundaries for recorded classification, row layout, shared coordinate mapping, fail-safe modes, PTY lifecycle, exit propagation, and the public CLI. [V1, V2, V3, V4, V5]
+- `herdr-plugin.toml` — declare Linux-only Herdr 0.8.2-compatible `claude`, `pi`, and `codex` actions plus matching terminal pane entrypoints. [S2, D1, D2, V5]
+- `plugins/herdr-terminal-proxy/launch.sh` — map each action id to `herdr plugin pane open` for its declared pane entrypoint, preserving the active workspace/cwd context and routing every pane command through the repository's `hebrew-tty` binary. [C2, S2, D1, V5]
+- `tools/verify-herdr-plugin.sh` — link the local manifest, assert no plugin warnings, list and invoke all three actions, verify their pane commands contain the shared proxy, then unlink without modifying Herdr core. [C2, NG3, V5]
+- `tools/smoke-ptyxis.sh` — run the interactive Linux/Ptyxis width/resize/caret matrix and collect cursor-position reports and diagnostics for explicit human confirmation only where deterministic PTY assertions cannot cover the terminal renderer. [D2, V3]
+- `package.json`, `README.md`, and `CLAUDE.md` — package the Rust launcher/artifacts, replace obsolete Python-PTY commands and architecture notes, and document configuration, modes, diagnostics, plugin linking, Linux scope, verification, and rollback. [G1, S1, S2, A2, D2, V5]
+
+## Decision rules
+
+- When a row or execution path lacks complete recorded evidence, what happens? → `auto` emits a diagnostic and preserves the original bytes/cells; only an explicit command override may select another mode. [A2, D3, NG4]
+- Which layer may reorder text? → The proxy performs the single transformation only for a verified path, and terminal BiDi mode is selected so no second layer repeats it. [C3, A1]
+- What is the unit of wrapping and BiDi layout? → Logical content is wrapped first, then each resulting visual row is resolved and painted independently so wrapped rows keep top-to-bottom order. [C3, D4, V2]
+- Which coordinate resolution controls alignment and caret placement? → One `LayoutResult` supplies both the row shift and logical↔visual grapheme map for the repaint batch. [G2, D4, V3]
+- What configuration contract is implemented first? → A versioned TOML file under the XDG configuration directory contains command-specific mode overrides, with reversible schema details isolated in `src/config.rs`. [A2, Q1]
+- How does Herdr integrate? → Manifest actions open manifest-declared terminal panes whose commands invoke the standalone proxy; no render hook or Herdr-core patch is introduced. [C2, D1, NG3]
+
+## Steps
+
+- [ ] 1. `tools/terminal_proxy_probe.py`, `test/fixtures/terminal-proxy/measurements/*.json`, and `tests/measurements.rs` — implement the recording schema and capture the six direct/Herdr-hosted agent paths at multiple widths; prove the untouched recordings classify order and wrapping with `cargo test --test measurements && python3 tools/terminal_proxy_probe.py verify test/fixtures/terminal-proxy/measurements` before adding any transformation logic. [S3, A1, V1]
+- [ ] 2. `Cargo.toml`, `src/main.rs`, `src/cli.rs`, `src/platform/{mod.rs,linux.rs}`, `bin/hebrew-tty`, and `tests/cli.rs` — establish the smallest reviewable Rust slice: transparent Linux PTY transport, resize/signal/exit propagation, argv0 compatibility, and byte-for-byte pass-through; prove it with `cargo test --test cli passthrough`. [C1, S1, D2, V4, V5]
+- [ ] 3. `src/config.rs`, `src/classify.rs`, `src/diagnostics.rs`, and `tests/safe_modes.rs` — load XDG command policies, classify only the recorded execution paths, surface evidence, and enforce `auto`/override behavior while transformation remains a no-op; prove safe fallback first with `cargo test --test safe_modes`. [A2, D3, Q1, V1, V4]
+- [ ] 4. `src/terminal.rs`, `test/fixtures/terminal-proxy/screens/*.json`, and `tests/screen_layout.rs` — build VT cell/style/cursor state, pane spans, dirty-row tracking, and resize/reflow replay against measured streams without BiDi mutation; prove parsing stability with `cargo test --test screen_layout`. [S1, D4, V2]
+- [ ] 5. `src/layout.rs` and `tests/screen_layout.rs` — add verified logical recovery, wrap-before-row-resolution, mixed-direction display ordering, mirroring, and pane-right alignment using one transformation per classified path; prove row order and widths with `cargo test --test screen_layout`. [C3, A1, D3, D4, V2]
+- [ ] 6. `src/layout.rs`, `src/render.rs`, and `tests/caret_mapping.rs` — produce the shared grapheme coordinate map, repaint only dirty rows, restore mapped caret position, and recompute after streamed edits and resize; prove it with `cargo test --test caret_mapping`. [G2, S1, D4, V3]
+- [ ] 7. `herdr-plugin.toml`, `plugins/herdr-terminal-proxy/launch.sh`, and `tools/verify-herdr-plugin.sh` — declare and exercise the Claude Code, Pi, and Codex action→pane launch paths through the same binary; prove linking and invocation with `tools/verify-herdr-plugin.sh`. [C2, S2, D1, D2, V5]
+- [ ] 8. `package.json`, `README.md`, and `CLAUDE.md` — switch packaging and operator guidance to the Rust proxy, document XDG modes/diagnostics, direct and Herdr commands, supported boundaries, and rollback, while retaining the old JavaScript fixture suite as regression evidence during migration; prove both generations with `cargo test --all-targets && npm test`. [C1, G1, A2, D2, V2, V3, V4, V5]
+- [ ] 9. End-to-end verification: run `cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all-targets && npm test && python3 tools/terminal_proxy_probe.py verify test/fixtures/terminal-proxy/measurements && tools/verify-herdr-plugin.sh && tools/smoke-ptyxis.sh`; update each requirement row to `passing` only with its named evidence. [V1, V2, V3, V4, V5]
