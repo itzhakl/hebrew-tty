@@ -21,6 +21,7 @@
 - **NG2** — The first release does not remap mouse input, terminal selection, or copied text.
 - **NG3** — The first release does not modify Herdr core or require a Herdr render hook; a direct render-hook integration remains a later upstream phase.
 - **NG4** — Unknown or unverifiable output is not reordered by default.
+- **NG5** — Host pipe EOF is not synthesized inside the child PTY: a PTY has no write-half close, and injecting a control byte would corrupt raw-mode input or race later terminal-mode changes. The proxy stops reading and preserves the child session until the child exits, matching a real terminal whose input remains attached.
 
 ## Approach
 - **A1** — First measure each application and hosting path, then run it behind a Rust virtual-terminal proxy that owns the single allowed BiDi transformation and repaints verified visual rows; expose the same binary through Herdr plugin actions.
@@ -107,7 +108,7 @@
 ## Steps
 
 - [x] 1. `tools/terminal_proxy_probe.py`, `test/fixtures/terminal-proxy/measurements/*.json`, and `tests/measurements.rs` — implement the recording schema and capture the six direct/Herdr-hosted agent paths at multiple widths; prove the untouched recordings classify order and wrapping with `cargo test --test measurements && python3 tools/terminal_proxy_probe.py verify test/fixtures/terminal-proxy/measurements` before adding any transformation logic. [S3, A1, V1]
-- [ ] 2. `Cargo.toml`, `src/main.rs`, `src/cli.rs`, `src/platform/{mod.rs,linux.rs}`, `bin/hebrew-tty`, and `tests/cli.rs` — establish the smallest reviewable Rust slice: transparent Linux PTY transport, resize/signal/exit propagation, argv0 compatibility, and byte-for-byte pass-through; prove it with `cargo test --test cli passthrough`. [C1, S1, D2, V4, V5]
+- [x] 2. `Cargo.toml`, `src/main.rs`, `src/cli.rs`, `src/platform/{mod.rs,linux.rs}`, `bin/hebrew-tty`, and `tests/cli.rs` — establish the smallest reviewable Rust slice: transparent Linux PTY transport, resize/signal/exit propagation, argv0 compatibility, and byte-for-byte pass-through; prove it with `cargo test --test cli passthrough`. [C1, S1, D2, V4, V5]
 - [ ] 3. `src/config.rs`, `src/classify.rs`, `src/diagnostics.rs`, and `tests/safe_modes.rs` — load XDG command policies, classify only the recorded execution paths, surface evidence, and enforce `auto`/override behavior while transformation remains a no-op; prove safe fallback first with `cargo test --test safe_modes`. [A2, D3, Q1, V1, V4]
 - [ ] 4. `src/terminal.rs`, `test/fixtures/terminal-proxy/screens/*.json`, and `tests/screen_layout.rs` — build VT cell/style/cursor state, pane spans, dirty-row tracking, and resize/reflow replay against measured streams without BiDi mutation; prove parsing stability with `cargo test --test screen_layout`. [S1, D4, V2]
 - [ ] 5. `src/layout.rs` and `tests/screen_layout.rs` — add verified logical recovery, wrap-before-row-resolution, mixed-direction display ordering, mirroring, and pane-right alignment using one transformation per classified path; prove row order and widths with `cargo test --test screen_layout`. [C3, A1, D3, D4, V2]
