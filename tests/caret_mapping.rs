@@ -48,6 +48,28 @@ fn streaming_growth_keeps_the_end_caret_against_the_last_grapheme() {
 }
 
 #[test]
+fn visual_order_cup_columns_remain_physical_while_typing_rtl() {
+    let mut model = TerminalModel::new(2, 65).unwrap();
+    model.feed(format!("\x1b[1;1H{}דגבא\x1b[1;63H", " ".repeat(59)).as_bytes());
+    let path = verified_path(Order::Visual);
+    let mut renderer = Renderer::new(Vec::new());
+    let first_snapshot = model.snapshot();
+    assert_eq!(first_snapshot.cursor.col, 62);
+    let first = renderer
+        .repaint(&first_snapshot, &path, Mode::Auto)
+        .unwrap();
+
+    model.feed(format!("\x1b[1;1H{}הדגבא\x1b[1;62H", " ".repeat(57)).as_bytes());
+    let second_snapshot = model.snapshot();
+    assert_eq!(second_snapshot.cursor.col, 61);
+    let second = renderer
+        .repaint(&second_snapshot, &path, Mode::Auto)
+        .unwrap();
+
+    assert_eq!((first.cursor.col, second.cursor.col), (62, 61));
+}
+
+#[test]
 fn visual_recovery_maps_the_reported_logical_column() {
     let mut model = TerminalModel::new(2, 10).unwrap();
     model.feed("דגבא".as_bytes());
