@@ -49,7 +49,8 @@ that is what lets it run outside the program instead of inside it.
   manual permute, not `getReorderedString`.
 - Caret mapping and row alignment must read the same per-row resolution. Two
   independent resolutions make the row flicker between alignments while typing.
-- Lines with no RTL character are left untouched.
+- Lines with no RTL character are left untouched, except when a prose continuation inherits a verified RTL base and alignment from its visible pane-local paragraph anchor. That exception changes placement and base direction only; it does not reverse Latin glyph order.
+- Unstyled Markdown code starts a paragraph at a literal tab or exactly four leading spaces. The visible terminal snapshot cannot distinguish an expanded tab from right-alignment padding, so ambiguous wider indentation remains prose.
 - A buffer row is not a line. A multiplexer splitting the screen side by side
   draws a rule down one column, and the row then holds two unrelated lines. The
   divider columns are found once per viewport - a rule running nearly the full
