@@ -1,0 +1,56 @@
+{
+  "schema_version": 2,
+  "recorded_at": "2026-08-30T04:12:18.452072Z",
+  "agent": "codex",
+  "agent_version": "codex-cli 0.151.0",
+  "host": "herdr",
+  "terminal": {
+    "rows": 30,
+    "columns": 48,
+    "term": "xterm-256color",
+    "herdr_env": true
+  },
+  "provenance": {
+    "path": "herdr_outer_screen",
+    "controlling_tty": true,
+    "isolated_session": true,
+    "herdr_version": "herdr 0.8.2",
+    "session_verified": true,
+    "pane_verified": true,
+    "agent_process_verified": true
+  },
+  "probe": "HTP_A אבגדה HTP_B 0123456789 abcDEF HTP_C וזחטי HTP_D",
+  "events": [
+    {
+      "kind": "resize",
+      "elapsed_ms": 0,
+      "rows": 30,
+      "columns": 48
+    },
+    {
+      "kind": "agent_launch",
+      "elapsed_ms": 2098
+    },
+    {
+      "kind": "input",
+      "elapsed_ms": 10182,
+      "text": "HTP_A אבגדה HTP_B 0123456789 abcDEF HTP_C וזחטי HTP_D",
+      "submitted": false
+    }
+  ],
+  "observed": {
+    "probe_fragments": [
+      "HTP_A אבגדה HTP_B 0123456789 abcDEF HTP_C",
+      "וזחטי HTP_D"
+    ],
+    "source": "reconstructed_terminal_rows"
+  },
+  "classification": {
+    "order": "logical",
+    "wrapping": "post_bidi",
+    "evidence": [
+      "Hebrew order by reconstructed row: row 1=logical, row 2=logical",
+      "wrapped marker rows A/B/C/D=[0, 0, 0, 1] identify post_bidi at 48 columns"
+    ]
+  }
+}

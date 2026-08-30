@@ -1,19 +1,23 @@
 # hebrew-tty
 
-Puts Hebrew back the way it was typed in a terminal TUI. Claude Code lays out
-its own rows before they reach the terminal, so Hebrew arrives already
-reordered, flushed to the wrong edge, with the caret away from the glyph it is
-editing. The program runs on a pty of its own and the rows are repaired on the
-wire - nothing is patched, and an upgrade of the program inside cannot break
-it. Zero-dependency at runtime except `bidi-js`, and `ws` for dictation.
+Puts Hebrew back the way it was typed in terminal coding agents. The Linux
+Rust proxy owns the child PTY, VT screen model, verified execution-path
+classification, per-row Unicode BiDi layout, pane alignment, repainting, and
+caret map. Unknown paths pass through unchanged. Nothing inside Claude Code,
+Pi, or Codex is patched. Node dependencies remain only for dictation and the
+retained JavaScript regression suite.
 
 ## Layout
 
 | path                 | role                                                          |
 | -------------------- | ------------------------------------------------------------- |
-| `bin/hebrew-tty`     | the filter: raw stdin, pass-through, resize; the transform hooks in one place |
-| `tools/ptyhost.py`   | gives the child a pty and takes the window size on fd 3        |
-| `src/caret.js`       | the row repair: recovery, caret mapping, mirroring, shift      |
+| `bin/hebrew-tty`     | compatibility launcher for a built or packaged Rust binary     |
+| `src/platform/linux.rs` | Linux PTY transport, signals, resize, and stream integration |
+| `src/terminal.rs`    | VT screen cells, styles, cursor, panes, dirty rows, and reflow  |
+| `src/classify.rs`    | fail-safe measured execution-path classification                |
+| `src/layout.rs`      | logical recovery, per-row BiDi, mirroring, alignment, caret map |
+| `src/render.rs`      | dirty-row repaint and mapped-caret restoration                  |
+| `src/caret.js`       | predecessor engine retained as JavaScript regression evidence   |
 | `bin/hebrew-voice`   | dictation entry point                                          |
 | `src/voice/`         | Hebrew dictation: local `voice_stream` server, ElevenLabs Scribe or local Whisper |
 | `test/run.js`        | assertion runner over `test/fixtures/*.json`                   |
@@ -25,11 +29,13 @@ it. Zero-dependency at runtime except `bidi-js`, and `ws` for dictation.
 ## Commands
 
 ```sh
-npm test                        # the whole suite
-node bin/hebrew-tty claude      # run a program with its Hebrew repaired
+cargo test --all-targets        # Rust proxy suites
+npm test                        # predecessor layout, voice, and patcher regressions
+cargo build --release
+bin/hebrew-tty claude           # direct proxy launch
+bin/hebrew-tty pi
+bin/hebrew-tty codex
 node bin/hebrew-voice serve     # dictation, needs no install and no root
-hebrew-tty-build                # make the patched build for the current version
-python3 tools/patch-binary.py --check <build>   # does that build repair Hebrew?
 ```
 
 ## Invariants

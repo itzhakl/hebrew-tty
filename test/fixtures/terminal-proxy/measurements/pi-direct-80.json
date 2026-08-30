@@ -1,0 +1,47 @@
+{
+  "schema_version": 2,
+  "recorded_at": "2026-08-30T04:08:31.351336Z",
+  "agent": "pi",
+  "agent_version": "0.84.4",
+  "host": "direct",
+  "terminal": {
+    "rows": 30,
+    "columns": 80,
+    "term": "xterm-256color",
+    "herdr_env": false
+  },
+  "provenance": {
+    "path": "direct_pty",
+    "controlling_tty": true,
+    "isolated_session": false
+  },
+  "probe": "HTP_A אבגדה HTP_B 0123456789 abcDEF HTP_C וזחטי HTP_D",
+  "events": [
+    {
+      "kind": "resize",
+      "elapsed_ms": 0,
+      "rows": 30,
+      "columns": 80
+    },
+    {
+      "kind": "input",
+      "elapsed_ms": 8063,
+      "text": "HTP_A אבגדה HTP_B 0123456789 abcDEF HTP_C וזחטי HTP_D",
+      "submitted": false
+    }
+  ],
+  "observed": {
+    "probe_fragments": [
+      "HTP_A הדגבא HTP_B 0123456789 abcDEFHTP_CיטחזוHTP_D"
+    ],
+    "source": "reconstructed_terminal_rows"
+  },
+  "classification": {
+    "order": "visual",
+    "wrapping": "not_observed",
+    "evidence": [
+      "Hebrew order by reconstructed row: row 1=visual",
+      "wrapping was not exercised because the 53-column probe fits at 80 columns"
+    ]
+  }
+}
