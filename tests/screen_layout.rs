@@ -344,6 +344,26 @@ fn pane_alignment_and_table_cell_layout_keep_rules_fixed() {
 }
 
 #[test]
+fn layout_falls_back_when_a_pane_cannot_hold_a_wide_grapheme() {
+    let mut model = TerminalModel::new(2, 8).unwrap();
+    model.feed("א界".as_bytes());
+    let snapshot = model.snapshot();
+    let row = &snapshot.physical_rows[0];
+    let result = layout_row(
+        row,
+        PaneSpan {
+            start_col: 1,
+            end_col: 2,
+        },
+        &verified_path(Order::Logical),
+        Mode::Auto,
+    );
+
+    assert_eq!(result.cells, row.cells);
+    assert!(!result.transformed);
+}
+
+#[test]
 fn reordered_glyphs_keep_their_original_style() {
     let mut model = TerminalModel::new(2, 8).unwrap();
     model.feed("\x1b[31;44mא\x1b[39mבגד    ".as_bytes());

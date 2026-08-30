@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use unicode_bidi::{BidiInfo, Level};
 use unicode_bidi_mirroring::get_mirrored;
 use unicode_segmentation::UnicodeSegmentation;
@@ -11,16 +13,42 @@ const MAX_GRAPHEMES: usize = 2_000;
 const PROMPTS: &[&str] = &["❯", ">", "»", "❱", "›"];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CoordinateMap {
+    pub logical_start: usize,
+    pub logical_end: usize,
+    pub logical_to_visual: Vec<u16>,
+    pub visual_to_logical: Vec<Option<usize>>,
+}
+
+impl CoordinateMap {
+    pub fn visual_col(&self, logical_col: usize) -> Option<u16> {
+        (self.logical_start..=self.logical_end)
+            .contains(&logical_col)
+            .then(|| self.logical_to_visual[logical_col - self.logical_start])
+    }
+
+    pub fn logical_col(&self, visual_col: u16) -> Option<usize> {
+        self.visual_to_logical
+            .get(usize::from(visual_col))
+            .copied()
+            .flatten()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LayoutResult {
     pub cells: Vec<CellSnapshot>,
     pub transformed: bool,
     pub right_aligned: bool,
     pub logical_text: Option<String>,
+    pub coordinates: Option<CoordinateMap>,
 }
 
 #[derive(Clone, Eq, PartialEq)]
 struct Token {
     cell: CellSnapshot,
+    logical_col: usize,
+    rtl: bool,
 }
 
 #[derive(Clone)]
@@ -96,8 +124,12 @@ fn layout_group(
         },
         RowDisposition::PassThrough => return rows.iter().map(unchanged).collect(),
     };
+    let mut logical = logical;
+    assign_logical_columns(&mut logical);
     let logical_text = text_of(&logical);
-    let wrapped = wrap_tokens(logical, width);
+    let Some(wrapped) = wrap_tokens(logical, width) else {
+        return rows.iter().map(unchanged).collect();
+    };
     if wrapped.len() > rows.len() {
         return rows.iter().map(unchanged).collect();
     }
@@ -148,12 +180,14 @@ fn layout_logical_row(
     let pane_width = usize::from(pane.end_col - pane.start_col);
     let right_aligned = !has_layout && base_rtl && used < pane_width;
     let offset = if right_aligned { pane_width - used } else { 0 };
+    let coordinates = coordinate_map(&visual, pane, offset);
     let cells = paint_into(template, pane, &visual, offset);
     LayoutResult {
         transformed: cells != template.cells,
         cells,
         right_aligned,
         logical_text: Some(logical_text.to_owned()),
+        coordinates,
     }
 }
 
@@ -274,7 +308,8 @@ fn visual_tokens(resolution: &Resolution, mirror: bool) -> Vec<Token> {
         .iter()
         .map(|&logical| {
             let mut token = resolution.tokens[logical].clone();
-            if mirror && resolution.levels[logical].is_rtl() {
+            token.rtl = resolution.levels[logical].is_rtl();
+            if mirror && token.rtl {
                 token.cell.text = mirror_text(&token.cell.text);
             }
             token
@@ -293,9 +328,9 @@ fn mirror_text(text: &str) -> String {
     }
 }
 
-fn wrap_tokens(tokens: Vec<Token>, width: usize) -> Vec<Vec<Token>> {
+fn wrap_tokens(tokens: Vec<Token>, width: usize) -> Option<Vec<Vec<Token>>> {
     if width == 0 {
-        return Vec::new();
+        return None;
     }
     let mut rows = vec![Vec::new()];
     let mut used = 0;
@@ -306,12 +341,12 @@ fn wrap_tokens(tokens: Vec<Token>, width: usize) -> Vec<Vec<Token>> {
             used = 0;
         }
         if token_width > width {
-            continue;
+            return None;
         }
         used += token_width;
         rows.last_mut().unwrap().push(token);
     }
-    rows
+    Some(rows)
 }
 
 fn tokens_in(row: &PhysicalRowSnapshot, pane: PaneSpan, keep_padding: bool) -> Vec<Token> {
@@ -331,6 +366,8 @@ fn tokens_in(row: &PhysicalRowSnapshot, pane: PaneSpan, keep_padding: bool) -> V
             } else {
                 cell.clone()
             },
+            logical_col: 0,
+            rtl: false,
         })
         .collect::<Vec<_>>();
     if !keep_padding {
@@ -406,6 +443,58 @@ fn prompt_prefix_len(tokens: &[Token]) -> usize {
     }
 }
 
+fn assign_logical_columns(tokens: &mut [Token]) {
+    let mut col = 0;
+    for token in tokens {
+        token.logical_col = col;
+        col += token_width(token);
+    }
+}
+
+fn coordinate_map(tokens: &[Token], pane: PaneSpan, offset: usize) -> Option<CoordinateMap> {
+    let logical_start = tokens.iter().map(|token| token.logical_col).min()?;
+    let logical_end = tokens
+        .iter()
+        .map(|token| token.logical_col + token_width(token))
+        .max()?;
+    let mut positions = BTreeMap::new();
+    let mut visual_col = usize::from(pane.start_col) + offset;
+    for token in tokens {
+        positions.insert(
+            token.logical_col,
+            (visual_col, token_width(token), token.rtl),
+        );
+        visual_col += token_width(token);
+    }
+
+    let mut logical_to_visual = vec![0; logical_end - logical_start + 1];
+    let first = positions.get(&logical_start)?;
+    logical_to_visual[0] = u16::try_from(if first.2 { first.0 + first.1 } else { first.0 }).ok()?;
+    for (&logical_col, &(visual_col, width, rtl)) in &positions {
+        for step in 1..=width {
+            let mapped = if rtl {
+                visual_col + width - step
+            } else {
+                visual_col + step
+            };
+            logical_to_visual[logical_col + step - logical_start] = u16::try_from(mapped).ok()?;
+        }
+    }
+
+    let mut visual_to_logical = vec![None; usize::from(pane.end_col) + 1];
+    for (offset, &visual) in logical_to_visual.iter().enumerate() {
+        if let Some(slot) = visual_to_logical.get_mut(usize::from(visual)) {
+            slot.get_or_insert(logical_start + offset);
+        }
+    }
+    Some(CoordinateMap {
+        logical_start,
+        logical_end,
+        logical_to_visual,
+        visual_to_logical,
+    })
+}
+
 fn display_width(tokens: &[Token]) -> usize {
     tokens.iter().map(token_width).sum()
 }
@@ -458,6 +547,7 @@ fn unchanged(row: &PhysicalRowSnapshot) -> LayoutResult {
         transformed: false,
         right_aligned: false,
         logical_text: None,
+        coordinates: None,
     }
 }
 
