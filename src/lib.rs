@@ -3,3 +3,4 @@
 pub mod classify;
 pub mod config;
 pub mod diagnostics;
+pub mod terminal;
