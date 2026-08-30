@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 
-use crate::classify::ExecutionPath;
+use crate::classify::{select_mode, ExecutionPath, RowDisposition};
 use crate::config::Mode;
 use crate::layout::{layout_rows, CoordinateMap, LayoutResult};
 use crate::terminal::{
@@ -60,7 +60,8 @@ impl<W: Write> Renderer<W> {
                 .then_some(row_index)
             })
             .collect::<Vec<_>>();
-        let cursor = mapped_cursor(screen, &maps);
+        let disposition = select_mode(mode, path).disposition;
+        let cursor = mapped_cursor(screen, &maps, disposition);
 
         let mut relative_row = screen.cursor.row;
         if !dirty.is_empty() {
@@ -136,8 +137,15 @@ fn replace_pane(row: &mut PhysicalRowSnapshot, result: &LayoutResult, pane: Pane
     row.cells[start..end].clone_from_slice(&result.cells[start..end]);
 }
 
-fn mapped_cursor(screen: &ScreenSnapshot, maps: &[Vec<Option<CoordinateMap>>]) -> CursorSnapshot {
+fn mapped_cursor(
+    screen: &ScreenSnapshot,
+    maps: &[Vec<Option<CoordinateMap>>],
+    disposition: RowDisposition,
+) -> CursorSnapshot {
     let original = screen.cursor;
+    if disposition != RowDisposition::TransformLogical {
+        return original;
+    }
     let Some((pane_index, pane)) = screen
         .pane_spans
         .iter()
