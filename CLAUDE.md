@@ -236,6 +236,20 @@ that is what lets it run outside the program instead of inside it.
   a multilingual small invents Hebrew. `medium` does not fit beside the turbo on
   a 4 GB card. Quantising a second copy is not the way round it either - int8
   buys 13% (467 ms against 535), not a second channel.
+- `int8_float16` is what `computeType: auto` already resolves to on a card, and
+  a config that names `float16` is giving up a gigabyte for nothing. Measured on
+  the same recording, the two return the same transcript word for word - the
+  hard case included, a Hebrew sentence carrying `git`, `npm` and `deployment` -
+  while int8 holds 1241 MiB against 2233 and decodes no slower.
+- **A correction pass over the committed text does not fit on this card.** The
+  idea is sound - punctuation, and the English terms that come back
+  transliterated - but the room left beside whisper is ~2.7 GB, and what fits
+  there cannot do the job. Measured: Gemma 3 4B took 3.3 s, left every
+  transliterated term in Hebrew and deleted words that were there; Gemma 3 1B
+  took 1.2 s and answered the sentence instead of correcting it ("I'm sorry, I
+  can't do that"). That answer would have landed in the user's input box. The
+  model that could do this is one the card cannot hold at the same time as
+  whisper, and swapping them costs whisper's four second load per sentence.
 - **A fixed energy threshold does not survive a real microphone.** At 0.005 a
   quiet room already reads as speech, so silence never arrives, nothing ever
   commits, and dictation only lands when the key is released - which looks like
