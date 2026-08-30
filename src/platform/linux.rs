@@ -21,6 +21,7 @@ use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize}
 use rustix::process::{waitpid, Pid as RustixPid, WaitOptions, WaitStatus};
 use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGWINCH};
 use signal_hook::flag;
+use signal_hook::iterator::Signals;
 
 use super::WindowSize;
 use crate::cli::Command;
@@ -96,7 +97,7 @@ enum OutputEvent {
     Done(io::Result<u64>),
 }
 
-fn read_output(mut reader: Box<dyn io::Read + Send>, sender: mpsc::Sender<OutputEvent>) {
+fn read_output(mut reader: Box<dyn io::Read + Send>, sender: mpsc::SyncSender<OutputEvent>) {
     let mut buffer = [0; 16 * 1024];
     let mut total = 0;
     loop {
@@ -286,6 +287,9 @@ impl<'a> OutputRelay<'a> {
                     return renderer.writer_mut().flush();
                 }
                 if !screen_has_rtl(&snapshot) {
+                    if *corrected && (!pending_rows.is_empty() || *pending_cursor) {
+                        renderer.repaint_dirty(&snapshot, path, *mode, pending_rows)?;
+                    }
                     *corrected = false;
                     pending_rows.clear();
                     *pending_cursor = false;
@@ -355,14 +359,7 @@ fn screen_has_rtl(screen: &hebrew_tty::terminal::ScreenSnapshot) -> bool {
 pub fn run(command: Command, path: ExecutionPath, mode: Mode) -> Result<i32, Box<dyn Error>> {
     let resize_pending = Arc::new(AtomicBool::new(false));
     flag::register(SIGWINCH, Arc::clone(&resize_pending))?;
-    let forwarded = [SIGHUP, SIGINT, SIGQUIT, SIGTERM]
-        .into_iter()
-        .map(|number| {
-            let pending = Arc::new(AtomicBool::new(false));
-            flag::register(number, Arc::clone(&pending))?;
-            Ok((number, pending))
-        })
-        .collect::<Result<Vec<_>, io::Error>>()?;
+    let mut forwarded = Signals::new([SIGHUP, SIGINT, SIGQUIT, SIGTERM])?;
 
     let initial_size = terminal_size();
     let pair = native_pty_system().openpty(pty_size(initial_size))?;
@@ -382,13 +379,14 @@ pub fn run(command: Command, path: ExecutionPath, mode: Mode) -> Result<i32, Box
         let _ = writer_done_tx.send((result, writer));
     });
 
-    let (output_tx, output_rx) = mpsc::channel();
+    let (output_tx, output_rx) = mpsc::sync_channel(8);
     thread::spawn(move || read_output(reader, output_tx));
     let stdout = io::stdout();
     let mut relay = OutputRelay::new(stdout.lock(), initial_size, path, mode)?;
     let mut completed_writer = None;
     let mut output_result = None;
     let mut relay_failed_at = None;
+    let mut forwarded_once = false;
     let exit_code = loop {
         if completed_writer.is_none() {
             completed_writer = writer_done_rx.try_recv().ok();
@@ -429,13 +427,13 @@ pub fn run(command: Command, path: ExecutionPath, mode: Mode) -> Result<i32, Box
             pair.master.resize(pty_size(size))?;
             relay.resize(size)?;
         }
-        for (number, pending) in &forwarded {
-            if pending.swap(false, Ordering::Relaxed) {
-                if let (Some(group), Ok(signal)) = (
-                    pair.master.process_group_leader().map(Pid::from_raw),
-                    Signal::try_from(*number),
-                ) {
+        for number in forwarded.pending() {
+            if let Some(group) = pair.master.process_group_leader().map(Pid::from_raw) {
+                if forwarded_once {
+                    let _ = killpg(group, Signal::SIGKILL);
+                } else if let Ok(signal) = Signal::try_from(number) {
                     let _ = killpg(group, signal);
+                    forwarded_once = true;
                 }
             }
         }

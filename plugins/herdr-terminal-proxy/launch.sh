@@ -31,7 +31,8 @@ case "$operation" in
     : "${HERDR_PLUGIN_CONFIG_DIR:?HERDR_PLUGIN_CONFIG_DIR is required}"
     export HEBREW_TTY_HOST=herdr
     if [ -f "$HERDR_PLUGIN_CONFIG_DIR/verify-command" ]; then
-      exec "$HERDR_PLUGIN_ROOT/bin/hebrew-tty" --as "$agent" sh -c 'printf "hebrew-tty-plugin-ready\n"; sleep 300'
+      verify_token=$(cat "$HERDR_PLUGIN_CONFIG_DIR/verify-command")
+      exec "$HERDR_PLUGIN_ROOT/bin/hebrew-tty" --as "$agent" sh -c 'printf "hebrew-tty-plugin-ready\n"; sleep 300' "hebrew-tty-verify:$verify_token"
     fi
     exec "$HERDR_PLUGIN_ROOT/bin/hebrew-tty" --as "$agent" "$agent"
     ;;

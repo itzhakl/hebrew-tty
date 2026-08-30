@@ -1,7 +1,15 @@
 #!/bin/sh
 set -eu
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+script_path=$0
+while [ -L "$script_path" ]; do
+  link=$(readlink "$script_path")
+  case $link in
+    /*) script_path=$link ;;
+    *) script_path=$(dirname -- "$script_path")/$link ;;
+  esac
+done
+script_dir=$(CDPATH= cd -- "$(dirname -- "$script_path")" && pwd)
 
 if [ -n "${HEBREW_TTY_BIN:-}" ]; then
   binary=$HEBREW_TTY_BIN

@@ -8,7 +8,7 @@ use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use hebrew_tty::terminal::{CellWidth, TerminalModel};
+use hebrew_tty::terminal::{CellWidth, TerminalModel, UnderlineStyle};
 
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_hebrew-tty")
@@ -319,6 +319,7 @@ fn logical_mode_repaints_hebrew_rows_through_the_rust_renderer() {
     ]);
     assert!(output.status.success());
     assert!(output.stdout.len() > "אבגד".len());
+    assert!(!output.stdout.windows(7).any(|bytes| bytes == b"\x1b[24;1H"));
 
     let mut terminal = TerminalModel::new(24, 80).unwrap();
     terminal.feed(&output.stdout);
@@ -333,6 +334,59 @@ fn logical_mode_repaints_hebrew_rows_through_the_rust_renderer() {
     assert_eq!(text.trim(), "דגבא");
     assert_eq!(row.cells.iter().position(|cell| cell.text == "ד"), Some(76));
     assert_eq!(snapshot.cursor.col, 76);
+}
+
+#[test]
+fn logical_mode_clears_a_corrected_rtl_row_when_it_becomes_latin() {
+    let output = run(&[
+        "--mode",
+        "logical",
+        "sh",
+        "-c",
+        "printf 'אבגד'; sleep 0.05; printf '\\rlatin'",
+    ]);
+    assert!(output.status.success());
+
+    let mut terminal = TerminalModel::new(24, 80).unwrap();
+    terminal.feed(&output.stdout);
+    let snapshot = terminal.snapshot();
+    let row = &snapshot.physical_rows[0];
+    assert_eq!(
+        row.cells
+            .iter()
+            .filter(|cell| cell.width != CellWidth::Continuation)
+            .map(|cell| cell.text.as_str())
+            .collect::<String>()
+            .trim(),
+        "latin"
+    );
+    assert!(!row.cells.iter().any(|cell| cell.text.contains('א')));
+}
+
+#[test]
+fn logical_mode_preserves_extended_sgr_styles() {
+    let script = r#"import os
+os.write(1, b'\x1b]8;;https://example.com\x1b\\\x1b[8;9;4:2;58;2;255;0;0m' + 'אב'.encode() + b'\x1b[0m\x1b]8;;\x1b\\')
+"#;
+    let output = run(&["--mode", "logical", "python3", "-c", script]);
+    assert!(output.status.success());
+
+    let mut terminal = TerminalModel::new(24, 80).unwrap();
+    terminal.feed(&output.stdout);
+    let snapshot = terminal.snapshot();
+    let styled = snapshot.physical_rows[0]
+        .cells
+        .iter()
+        .find(|cell| cell.text == "א")
+        .unwrap();
+    assert!(styled.style.hidden);
+    assert!(styled.style.strikeout);
+    assert_eq!(styled.style.underline_style, UnderlineStyle::Double);
+    assert_eq!(
+        styled.style.underline_color,
+        Some(hebrew_tty::terminal::Color::Rgb(255, 0, 0))
+    );
+    assert_eq!(styled.hyperlink.as_deref(), Some("https://example.com"));
 }
 
 #[test]
@@ -445,6 +499,40 @@ if b'JOB_INT' not in data:
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(output.stdout.windows(7).any(|part| part == b"JOB_INT"));
+}
+
+#[test]
+fn second_termination_signal_kills_an_unresponsive_child() {
+    const DRIVER: &str = r#"
+import os, pty, select, signal, sys, time
+pid, fd = pty.fork()
+if pid == 0:
+    command = "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('READY', flush=True); time.sleep(30)"
+    os.execv(sys.argv[1], [sys.argv[1], 'python3', '-c', command])
+data = b''
+deadline = time.time() + 5
+while b'READY' not in data and time.time() < deadline:
+    ready, _, _ = select.select([fd], [], [], .1)
+    if ready: data += os.read(fd, 4096)
+if b'READY' not in data:
+    os.kill(pid, signal.SIGKILL)
+    raise SystemExit('child did not start')
+os.kill(pid, signal.SIGTERM)
+time.sleep(.1)
+os.kill(pid, 0)
+os.kill(pid, signal.SIGTERM)
+_, status = os.waitpid(pid, 0)
+code = os.waitstatus_to_exitcode(status)
+if code != 137:
+    raise SystemExit(f'expected 137, got {code}')
+"#;
+    let output = python_probe(DRIVER, &[]);
+    assert!(
+        output.status.success(),
+        "stdout={:?} stderr={}",
+        output.stdout,
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
@@ -602,6 +690,38 @@ fn compatibility_launcher_resolves_explicit_binary_without_recursion() {
 }
 
 #[test]
+fn compatibility_launcher_resolves_packaged_binary_through_npm_symlink() {
+    let dir = temp_dir("packaged-launcher");
+    let package = dir.join("node_modules/hebrew-tty");
+    let package_bin = package.join("bin");
+    let package_dist = package.join("dist");
+    let npm_bin = dir.join("node_modules/.bin");
+    fs::create_dir_all(&package_bin).unwrap();
+    fs::create_dir_all(&package_dist).unwrap();
+    fs::create_dir_all(&npm_bin).unwrap();
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("bin/hebrew-tty"),
+        package_bin.join("hebrew-tty"),
+    )
+    .unwrap();
+    let binary = package_dist.join("hebrew-tty-linux-x86_64");
+    fs::copy("/bin/echo", &binary).unwrap();
+    let launcher = npm_bin.join("hebrew-tty");
+    symlink("../hebrew-tty/bin/hebrew-tty", &launcher).unwrap();
+
+    let output = Command::new(&launcher)
+        .env_remove("HEBREW_TTY_BIN")
+        .env("PATH", "/usr/bin:/bin")
+        .args(["one", "two"])
+        .output()
+        .unwrap();
+    fs::remove_dir_all(dir).unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"one two\n");
+}
+
+#[test]
 fn compatibility_launcher_rejects_explicit_self_reference() {
     let launcher = Path::new(env!("CARGO_MANIFEST_DIR")).join("bin/hebrew-tty");
     let output = Command::new(&launcher)
@@ -621,9 +741,13 @@ fn compatibility_launcher_rejects_itself_on_path() {
     let dir = temp_dir("launcher-recursion");
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("bin/hebrew-tty");
     let launcher = dir.join("hebrew-tty");
-    symlink(source, &launcher).unwrap();
+    fs::copy(source, &launcher).unwrap();
+    let mut permissions = fs::metadata(&launcher).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&launcher, permissions).unwrap();
 
-    let output = Command::new(&launcher)
+    let output = Command::new("/bin/sh")
+        .arg(&launcher)
         .env_remove("HEBREW_TTY_BIN")
         .env("PATH", format!("{}:/usr/bin:/bin", dir.display()))
         .output()

@@ -5,6 +5,7 @@ use crate::config::Mode;
 use crate::layout::{layout_rows, CoordinateMap, LayoutResult};
 use crate::terminal::{
     CellWidth, Color, CursorSnapshot, PaneSpan, PhysicalRowSnapshot, ScreenSnapshot, StyleSnapshot,
+    UnderlineStyle,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -43,30 +44,44 @@ impl<W: Write> Renderer<W> {
         invalidated_rows: &[u16],
     ) -> io::Result<RepaintSummary> {
         let (rows, maps) = compose_layout(screen, path, mode);
+        let relative_first_repaint = self.previous.is_none() && !invalidated_rows.is_empty();
         let dirty = rows
             .iter()
             .enumerate()
             .filter_map(|(index, row)| {
                 let row_index = index as u16;
                 (invalidated_rows.contains(&row_index)
-                    || self
-                        .previous
-                        .as_ref()
-                        .and_then(|previous| previous.get(index))
-                        != Some(row))
+                    || (!relative_first_repaint
+                        && self
+                            .previous
+                            .as_ref()
+                            .and_then(|previous| previous.get(index))
+                            != Some(row)))
                 .then_some(row_index)
             })
             .collect::<Vec<_>>();
         let cursor = mapped_cursor(screen, &maps);
 
+        let mut relative_row = screen.cursor.row;
         if !dirty.is_empty() {
             self.writer.write_all(b"\x1b[?25l")?;
             for &row_index in &dirty {
-                write!(self.writer, "\x1b[{};1H", row_index + 1)?;
+                if relative_first_repaint {
+                    move_to_relative_row(&mut self.writer, relative_row, row_index)?;
+                    self.writer.write_all(b"\r")?;
+                    relative_row = row_index;
+                } else {
+                    write!(self.writer, "\x1b[{};1H", row_index + 1)?;
+                }
                 write_row(&mut self.writer, &rows[usize::from(row_index)])?;
             }
         }
-        write!(self.writer, "\x1b[{};{}H", cursor.row + 1, cursor.col + 1)?;
+        if relative_first_repaint {
+            move_to_relative_row(&mut self.writer, relative_row, cursor.row)?;
+            write!(self.writer, "\x1b[{}G", cursor.col + 1)?;
+        } else {
+            write!(self.writer, "\x1b[{};{}H", cursor.row + 1, cursor.col + 1)?;
+        }
         self.writer.write_all(if cursor.visible {
             b"\x1b[?25h"
         } else {
@@ -87,6 +102,14 @@ impl<W: Write> Renderer<W> {
 
     pub fn into_inner(self) -> W {
         self.writer
+    }
+}
+
+fn move_to_relative_row(writer: &mut impl Write, from: u16, to: u16) -> io::Result<()> {
+    match to.cmp(&from) {
+        std::cmp::Ordering::Less => write!(writer, "\x1b[{}A", from - to),
+        std::cmp::Ordering::Greater => write!(writer, "\x1b[{}B", to - from),
+        std::cmp::Ordering::Equal => Ok(()),
     }
 }
 
@@ -161,9 +184,20 @@ fn mapped_cursor(screen: &ScreenSnapshot, maps: &[Vec<Option<CoordinateMap>>]) -
 
 fn write_row(writer: &mut impl Write, row: &PhysicalRowSnapshot) -> io::Result<()> {
     let mut style = None;
+    let mut hyperlink = None;
     for cell in &row.cells {
         if cell.width == CellWidth::Continuation {
             continue;
+        }
+        let cell_hyperlink = cell.hyperlink.as_deref();
+        if hyperlink != cell_hyperlink {
+            writer.write_all(b"\x1b]8;;\x1b\\")?;
+            if let Some(uri) = cell_hyperlink {
+                writer.write_all(b"\x1b]8;;")?;
+                writer.write_all(uri.as_bytes())?;
+                writer.write_all(b"\x1b\\")?;
+            }
+            hyperlink = cell_hyperlink;
         }
         if style != Some(cell.style) {
             write_style(writer, cell.style)?;
@@ -174,6 +208,9 @@ fn write_row(writer: &mut impl Write, row: &PhysicalRowSnapshot) -> io::Result<(
         } else {
             writer.write_all(cell.text.as_bytes())?;
         }
+    }
+    if hyperlink.is_some() {
+        writer.write_all(b"\x1b]8;;\x1b\\")?;
     }
     writer.write_all(b"\x1b[0m")
 }
@@ -189,11 +226,29 @@ fn write_style(writer: &mut impl Write, style: StyleSnapshot) -> io::Result<()> 
     if style.italic {
         writer.write_all(b";3")?;
     }
-    if style.underline {
-        writer.write_all(b";4")?;
+    match style.underline_style {
+        UnderlineStyle::None => {
+            if style.underline {
+                writer.write_all(b";4")?;
+            }
+        }
+        UnderlineStyle::Single => writer.write_all(b";4")?,
+        UnderlineStyle::Double => writer.write_all(b";4:2")?,
+        UnderlineStyle::Curl => writer.write_all(b";4:3")?,
+        UnderlineStyle::Dotted => writer.write_all(b";4:4")?,
+        UnderlineStyle::Dashed => writer.write_all(b";4:5")?,
+    }
+    if let Some(color) = style.underline_color {
+        write_color_code(writer, color, 58)?;
     }
     if style.inverse {
         writer.write_all(b";7")?;
+    }
+    if style.hidden {
+        writer.write_all(b";8")?;
+    }
+    if style.strikeout {
+        writer.write_all(b";9")?;
     }
     write_color(writer, style.foreground, true)?;
     write_color(writer, style.background, false)?;
@@ -201,13 +256,15 @@ fn write_style(writer: &mut impl Write, style: StyleSnapshot) -> io::Result<()> 
 }
 
 fn write_color(writer: &mut impl Write, color: Color, foreground: bool) -> io::Result<()> {
+    write_color_code(writer, color, if foreground { 38 } else { 48 })
+}
+
+fn write_color_code(writer: &mut impl Write, color: Color, code: u8) -> io::Result<()> {
     match color {
-        Color::Default => writer.write_all(if foreground { b";39" } else { b";49" }),
-        Color::Indexed(index) => write!(writer, ";{};5;{index}", if foreground { 38 } else { 48 }),
-        Color::Rgb(red, green, blue) => write!(
-            writer,
-            ";{};2;{red};{green};{blue}",
-            if foreground { 38 } else { 48 }
-        ),
+        Color::Default if code == 38 => writer.write_all(b";39"),
+        Color::Default if code == 48 => writer.write_all(b";49"),
+        Color::Default => writer.write_all(b";59"),
+        Color::Indexed(index) => write!(writer, ";{code};5;{index}"),
+        Color::Rgb(red, green, blue) => write!(writer, ";{code};2;{red};{green};{blue}"),
     }
 }

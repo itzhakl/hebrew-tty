@@ -361,6 +361,7 @@ fn tokens_in(row: &PhysicalRowSnapshot, pane: PaneSpan, keep_padding: bool) -> V
                 CellSnapshot {
                     text: " ".to_owned(),
                     style: cell.style,
+                    hyperlink: None,
                     width: CellWidth::Single,
                 }
             } else {
@@ -403,6 +404,7 @@ fn paint_into(
     let end = usize::from(pane.end_col).min(cells.len());
     for cell in &mut cells[start..end] {
         cell.text.clear();
+        cell.hyperlink = None;
         cell.width = CellWidth::Empty;
     }
     let mut col = start + offset;
@@ -417,6 +419,7 @@ fn paint_into(
             cells[col + 1] = CellSnapshot {
                 text: String::new(),
                 style: token.cell.style,
+                hyperlink: None,
                 width: CellWidth::Continuation,
             };
         } else {
@@ -557,6 +560,7 @@ fn blank_result(row: &PhysicalRowSnapshot, pane: PaneSpan) -> LayoutResult {
     let end = usize::from(pane.end_col).min(result.cells.len());
     for cell in &mut result.cells[start..end] {
         cell.text.clear();
+        cell.hyperlink = None;
         cell.width = CellWidth::Empty;
     }
     result.transformed = result.cells != row.cells;

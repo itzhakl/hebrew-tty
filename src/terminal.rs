@@ -45,6 +45,17 @@ pub enum Color {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum UnderlineStyle {
+    #[default]
+    None,
+    Single,
+    Double,
+    Curl,
+    Dotted,
+    Dashed,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct StyleSnapshot {
     pub foreground: Color,
     pub background: Color,
@@ -52,7 +63,11 @@ pub struct StyleSnapshot {
     pub dim: bool,
     pub italic: bool,
     pub underline: bool,
+    pub underline_style: UnderlineStyle,
+    pub underline_color: Option<Color>,
     pub inverse: bool,
+    pub hidden: bool,
+    pub strikeout: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,6 +82,7 @@ pub enum CellWidth {
 pub struct CellSnapshot {
     pub text: String,
     pub style: StyleSnapshot,
+    pub hyperlink: Option<String>,
     pub width: CellWidth,
 }
 
@@ -263,9 +279,32 @@ fn cell_snapshot(cell: &Cell) -> CellSnapshot {
             dim: cell.flags.contains(Flags::DIM),
             italic: cell.flags.contains(Flags::ITALIC),
             underline: cell.flags.intersects(Flags::ALL_UNDERLINES),
+            underline_style: underline_style(cell.flags),
+            underline_color: cell
+                .underline_color()
+                .map(|value| color(value, NamedColor::Foreground)),
             inverse: cell.flags.contains(Flags::INVERSE),
+            hidden: cell.flags.contains(Flags::HIDDEN),
+            strikeout: cell.flags.contains(Flags::STRIKEOUT),
         },
+        hyperlink: cell.hyperlink().map(|value| value.uri().to_owned()),
         width,
+    }
+}
+
+fn underline_style(flags: Flags) -> UnderlineStyle {
+    if flags.contains(Flags::DOUBLE_UNDERLINE) {
+        UnderlineStyle::Double
+    } else if flags.contains(Flags::UNDERCURL) {
+        UnderlineStyle::Curl
+    } else if flags.contains(Flags::DOTTED_UNDERLINE) {
+        UnderlineStyle::Dotted
+    } else if flags.contains(Flags::DASHED_UNDERLINE) {
+        UnderlineStyle::Dashed
+    } else if flags.contains(Flags::UNDERLINE) {
+        UnderlineStyle::Single
+    } else {
+        UnderlineStyle::None
     }
 }
 
