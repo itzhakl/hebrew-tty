@@ -9,6 +9,8 @@ elif [ -x "$script_dir/../target/release/hebrew-tty" ]; then
   binary=$script_dir/../target/release/hebrew-tty
 elif [ -x "$script_dir/../target/debug/hebrew-tty" ]; then
   binary=$script_dir/../target/debug/hebrew-tty
+elif [ -x "$script_dir/../dist/hebrew-tty-linux-x86_64" ]; then
+  binary=$script_dir/../dist/hebrew-tty-linux-x86_64
 else
   binary=$(command -v hebrew-tty || true)
 fi

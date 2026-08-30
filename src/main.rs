@@ -171,7 +171,7 @@ fn run(invocation: cli::Invocation) -> Result<i32, Box<dyn Error>> {
         ))?;
     }
 
-    platform::run(invocation.command)
+    platform::run(invocation.command, path, policy.mode)
 }
 
 fn main() {

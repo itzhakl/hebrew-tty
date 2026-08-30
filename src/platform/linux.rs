@@ -10,6 +10,11 @@ use std::thread;
 use std::time::Duration;
 
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use hebrew_tty::classify::{select_mode, ExecutionPath, RowDisposition};
+use hebrew_tty::config::Mode;
+use hebrew_tty::layout::is_rtl_char;
+use hebrew_tty::render::Renderer;
+use hebrew_tty::terminal::TerminalModel;
 use nix::sys::signal::{killpg, Signal};
 use nix::unistd::Pid;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
@@ -86,23 +91,268 @@ fn terminate_foreground(master: &dyn MasterPty, child: &mut dyn Child, signal: S
     }
 }
 
-fn relay_output(reader: &mut dyn io::Read) -> io::Result<u64> {
-    let mut stdout = io::stdout().lock();
+enum OutputEvent {
+    Data(Vec<u8>),
+    Done(io::Result<u64>),
+}
+
+fn read_output(mut reader: Box<dyn io::Read + Send>, sender: mpsc::Sender<OutputEvent>) {
     let mut buffer = [0; 16 * 1024];
     let mut total = 0;
     loop {
-        let read = reader.read(&mut buffer)?;
-        if read == 0 {
-            break;
+        match reader.read(&mut buffer) {
+            Ok(0) => {
+                let _ = sender.send(OutputEvent::Done(Ok(total)));
+                break;
+            }
+            Ok(read) => {
+                total += u64::try_from(read).unwrap_or(0);
+                if sender
+                    .send(OutputEvent::Data(buffer[..read].to_vec()))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            Err(error) => {
+                let _ = sender.send(OutputEvent::Done(Err(error)));
+                break;
+            }
         }
-        stdout.write_all(&buffer[..read])?;
-        stdout.flush()?;
-        total += u64::try_from(read).unwrap_or(0);
     }
-    Ok(total)
 }
 
-pub fn run(command: Command) -> Result<i32, Box<dyn Error>> {
+#[derive(Clone, Copy, Default)]
+enum EscapeState {
+    #[default]
+    Ground,
+    Escape,
+    Csi,
+    String,
+    StringEscape,
+}
+
+#[derive(Default)]
+struct StreamBoundary {
+    escape: EscapeState,
+    utf8_continuations: u8,
+}
+
+impl StreamBoundary {
+    fn feed(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            if self.utf8_continuations > 0 {
+                if byte & 0b1100_0000 == 0b1000_0000 {
+                    self.utf8_continuations -= 1;
+                    continue;
+                }
+                self.utf8_continuations = 0;
+            }
+            if matches!(byte, 0x18 | 0x1a) {
+                self.escape = EscapeState::Ground;
+                continue;
+            }
+            if byte == 0x1b && !matches!(self.escape, EscapeState::String) {
+                self.escape = EscapeState::Escape;
+                continue;
+            }
+            self.escape = match self.escape {
+                EscapeState::Ground => match byte {
+                    0x90 | 0x9d..=0x9f => EscapeState::String,
+                    0x9b => EscapeState::Csi,
+                    0xc2..=0xdf => {
+                        self.utf8_continuations = 1;
+                        EscapeState::Ground
+                    }
+                    0xe0..=0xef => {
+                        self.utf8_continuations = 2;
+                        EscapeState::Ground
+                    }
+                    0xf0..=0xf4 => {
+                        self.utf8_continuations = 3;
+                        EscapeState::Ground
+                    }
+                    _ => EscapeState::Ground,
+                },
+                EscapeState::Escape => match byte {
+                    b'[' => EscapeState::Csi,
+                    b']' | b'P' | b'_' | b'^' => EscapeState::String,
+                    0x20..=0x2f => EscapeState::Escape,
+                    _ => EscapeState::Ground,
+                },
+                EscapeState::Csi => {
+                    if (0x40..=0x7e).contains(&byte) {
+                        EscapeState::Ground
+                    } else {
+                        EscapeState::Csi
+                    }
+                }
+                EscapeState::String => match byte {
+                    0x07 | 0x9c => EscapeState::Ground,
+                    0x1b => EscapeState::StringEscape,
+                    _ => EscapeState::String,
+                },
+                EscapeState::StringEscape => {
+                    if byte == b'\\' {
+                        EscapeState::Ground
+                    } else {
+                        EscapeState::String
+                    }
+                }
+            };
+        }
+    }
+
+    fn is_ground(&self) -> bool {
+        matches!(self.escape, EscapeState::Ground) && self.utf8_continuations == 0
+    }
+}
+
+enum OutputRelay<'a> {
+    Passthrough(io::StdoutLock<'a>),
+    Transform {
+        model: Box<TerminalModel>,
+        renderer: Renderer<io::StdoutLock<'a>>,
+        path: ExecutionPath,
+        mode: Mode,
+        corrected: bool,
+        boundary: StreamBoundary,
+        pending_rows: Vec<u16>,
+        pending_cursor: bool,
+    },
+}
+
+impl<'a> OutputRelay<'a> {
+    fn new(
+        writer: io::StdoutLock<'a>,
+        size: WindowSize,
+        path: ExecutionPath,
+        mode: Mode,
+    ) -> Result<Self, Box<dyn Error>> {
+        if select_mode(mode, &path).disposition == RowDisposition::PassThrough {
+            return Ok(Self::Passthrough(writer));
+        }
+        let mut model = TerminalModel::new(size.rows, size.cols)?;
+        model.take_dirty_rows();
+        Ok(Self::Transform {
+            model: Box::new(model),
+            renderer: Renderer::new(writer),
+            path,
+            mode,
+            corrected: false,
+            boundary: StreamBoundary::default(),
+            pending_rows: Vec::new(),
+            pending_cursor: false,
+        })
+    }
+
+    fn feed(&mut self, bytes: &[u8]) -> io::Result<()> {
+        match self {
+            Self::Passthrough(writer) => {
+                writer.write_all(bytes)?;
+                writer.flush()
+            }
+            Self::Transform {
+                model,
+                renderer,
+                path,
+                mode,
+                corrected,
+                boundary,
+                pending_rows,
+                pending_cursor,
+            } => {
+                let before = model.cursor();
+                if *corrected && boundary.is_ground() {
+                    write!(
+                        renderer.writer_mut(),
+                        "\x1b[{};{}H",
+                        before.row + 1,
+                        before.col + 1
+                    )?;
+                }
+                renderer.writer_mut().write_all(bytes)?;
+                boundary.feed(bytes);
+                model.feed(bytes);
+                pending_rows.extend(model.take_dirty_rows().into_iter().map(|row| row.row_index));
+                let snapshot = model.snapshot();
+                *pending_cursor |= before != snapshot.cursor;
+                if *corrected {
+                    pending_rows.extend(rtl_rows(&snapshot));
+                }
+                pending_rows.sort_unstable();
+                pending_rows.dedup();
+                if !boundary.is_ground() {
+                    return renderer.writer_mut().flush();
+                }
+                if !screen_has_rtl(&snapshot) {
+                    *corrected = false;
+                    pending_rows.clear();
+                    *pending_cursor = false;
+                    return renderer.writer_mut().flush();
+                }
+                if pending_rows.is_empty() && !*pending_cursor {
+                    return renderer.writer_mut().flush();
+                }
+                renderer.repaint_dirty(&snapshot, path, *mode, pending_rows)?;
+                *corrected = true;
+                pending_rows.clear();
+                *pending_cursor = false;
+                Ok(())
+            }
+        }
+    }
+
+    fn resize(&mut self, size: WindowSize) -> Result<(), Box<dyn Error>> {
+        if let Self::Transform {
+            model,
+            renderer,
+            path,
+            mode,
+            corrected,
+            pending_rows,
+            pending_cursor,
+            ..
+        } = self
+        {
+            model.resize(size.rows, size.cols)?;
+            let invalidated = model
+                .take_dirty_rows()
+                .into_iter()
+                .map(|row| row.row_index)
+                .collect::<Vec<_>>();
+            let snapshot = model.snapshot();
+            if screen_has_rtl(&snapshot) {
+                renderer.repaint_dirty(&snapshot, path, *mode, &invalidated)?;
+                *corrected = true;
+            } else {
+                *corrected = false;
+            }
+            pending_rows.clear();
+            *pending_cursor = false;
+        }
+        Ok(())
+    }
+}
+
+fn rtl_rows(screen: &hebrew_tty::terminal::ScreenSnapshot) -> impl Iterator<Item = u16> + '_ {
+    screen
+        .physical_rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| {
+            row.cells
+                .iter()
+                .any(|cell| cell.text.chars().any(is_rtl_char))
+        })
+        .map(|(index, _)| index as u16)
+}
+
+fn screen_has_rtl(screen: &hebrew_tty::terminal::ScreenSnapshot) -> bool {
+    rtl_rows(screen).next().is_some()
+}
+
+pub fn run(command: Command, path: ExecutionPath, mode: Mode) -> Result<i32, Box<dyn Error>> {
     let resize_pending = Arc::new(AtomicBool::new(false));
     flag::register(SIGWINCH, Arc::clone(&resize_pending))?;
     let forwarded = [SIGHUP, SIGINT, SIGQUIT, SIGTERM]
@@ -114,8 +364,9 @@ pub fn run(command: Command) -> Result<i32, Box<dyn Error>> {
         })
         .collect::<Result<Vec<_>, io::Error>>()?;
 
-    let pair = native_pty_system().openpty(pty_size(terminal_size()))?;
-    let mut reader = pair.master.try_clone_reader()?;
+    let initial_size = terminal_size();
+    let pair = native_pty_system().openpty(pty_size(initial_size))?;
+    let reader = pair.master.try_clone_reader()?;
     let mut writer = pair.master.take_writer()?;
     let mut child = pair.slave.spawn_command(command_builder(command))?;
     drop(pair.slave);
@@ -131,12 +382,10 @@ pub fn run(command: Command) -> Result<i32, Box<dyn Error>> {
         let _ = writer_done_tx.send((result, writer));
     });
 
-    let (output_done_tx, output_done_rx) = mpsc::channel();
-    thread::spawn(move || {
-        let result = relay_output(reader.as_mut());
-        let _ = output_done_tx.send(result);
-    });
-
+    let (output_tx, output_rx) = mpsc::channel();
+    thread::spawn(move || read_output(reader, output_tx));
+    let stdout = io::stdout();
+    let mut relay = OutputRelay::new(stdout.lock(), initial_size, path, mode)?;
     let mut completed_writer = None;
     let mut output_result = None;
     let mut relay_failed_at = None;
@@ -144,25 +393,41 @@ pub fn run(command: Command) -> Result<i32, Box<dyn Error>> {
         if completed_writer.is_none() {
             completed_writer = writer_done_rx.try_recv().ok();
         }
+        while let Ok(event) = output_rx.try_recv() {
+            match event {
+                OutputEvent::Data(bytes) => {
+                    if let Err(error) = relay.feed(&bytes) {
+                        terminate_foreground(pair.master.as_ref(), child.as_mut(), Signal::SIGTERM);
+                        relay_failed_at.get_or_insert_with(std::time::Instant::now);
+                        output_result.get_or_insert(Err(error));
+                    }
+                }
+                OutputEvent::Done(result) => {
+                    if result
+                        .as_ref()
+                        .is_err_and(|error| error.raw_os_error() != Some(5))
+                    {
+                        terminate_foreground(pair.master.as_ref(), child.as_mut(), Signal::SIGTERM);
+                        relay_failed_at.get_or_insert_with(std::time::Instant::now);
+                    }
+                    if output_result.is_none() {
+                        output_result = Some(result);
+                    }
+                }
+            }
+        }
         if let Some((_, status)) = waitpid(Some(child_pid), WaitOptions::NOHANG)? {
             if let Some(code) = child_exit_code(status) {
                 break code;
-            }
-        }
-        if output_result.is_none() {
-            if let Ok(result) = output_done_rx.try_recv() {
-                if result.is_err() {
-                    terminate_foreground(pair.master.as_ref(), child.as_mut(), Signal::SIGTERM);
-                    relay_failed_at = Some(std::time::Instant::now());
-                }
-                output_result = Some(result);
             }
         }
         if relay_failed_at.is_some_and(|failed| failed.elapsed() >= Duration::from_millis(500)) {
             terminate_foreground(pair.master.as_ref(), child.as_mut(), Signal::SIGKILL);
         }
         if resize_pending.swap(false, Ordering::Relaxed) {
-            pair.master.resize(pty_size(terminal_size()))?;
+            let size = terminal_size();
+            pair.master.resize(pty_size(size))?;
+            relay.resize(size)?;
         }
         for (number, pending) in &forwarded {
             if pending.swap(false, Ordering::Relaxed) {
@@ -179,11 +444,17 @@ pub fn run(command: Command) -> Result<i32, Box<dyn Error>> {
 
     drop(completed_writer);
     drop(pair.master);
-    let output_result = match output_result {
-        Some(result) => result,
-        None => output_done_rx.recv()?,
-    };
-    match output_result {
+    while output_result.is_none() {
+        match output_rx.recv()? {
+            OutputEvent::Data(bytes) => {
+                if let Err(error) = relay.feed(&bytes) {
+                    output_result = Some(Err(error));
+                }
+            }
+            OutputEvent::Done(result) => output_result = Some(result),
+        }
+    }
+    match output_result.unwrap() {
         Ok(_) => {}
         Err(error) if error.raw_os_error() == Some(5) => {}
         Err(error) => return Err(error.into()),

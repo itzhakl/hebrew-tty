@@ -8,6 +8,8 @@ use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use hebrew_tty::terminal::{CellWidth, TerminalModel};
+
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_hebrew-tty")
 }
@@ -304,6 +306,66 @@ fn passthrough_does_not_append_eof_bytes_in_raw_mode() {
 
     assert!(status.success());
     assert_eq!(output, b"616263");
+}
+
+#[test]
+fn logical_mode_repaints_hebrew_rows_through_the_rust_renderer() {
+    let output = run(&[
+        "--mode",
+        "logical",
+        "sh",
+        "-c",
+        "printf 'אבגד'; sleep 0.05; printf '\\rאבגד'",
+    ]);
+    assert!(output.status.success());
+    assert!(output.stdout.len() > "אבגד".len());
+
+    let mut terminal = TerminalModel::new(24, 80).unwrap();
+    terminal.feed(&output.stdout);
+    let snapshot = terminal.snapshot();
+    let row = &snapshot.physical_rows[0];
+    let text = row
+        .cells
+        .iter()
+        .filter(|cell| cell.width != CellWidth::Continuation)
+        .map(|cell| cell.text.as_str())
+        .collect::<String>();
+    assert_eq!(text.trim(), "דגבא");
+    assert_eq!(row.cells.iter().position(|cell| cell.text == "ד"), Some(76));
+    assert_eq!(snapshot.cursor.col, 76);
+}
+
+#[test]
+fn logical_mode_waits_for_complete_utf8_and_escape_sequences() {
+    let script = r#"import os, time
+hebrew = 'אבגד'.encode()
+for byte in hebrew:
+    os.write(1, bytes([byte]))
+    time.sleep(0.005)
+os.write(1, b'\x1b')
+time.sleep(0.02)
+os.write(1, b'[2;1H')
+os.write(1, hebrew)
+"#;
+    let output = run(&["--mode", "logical", "python3", "-c", script]);
+    assert!(output.status.success());
+
+    let mut terminal = TerminalModel::new(24, 80).unwrap();
+    terminal.feed(&output.stdout);
+    let snapshot = terminal.snapshot();
+    for row_index in [0, 1] {
+        let row = &snapshot.physical_rows[row_index];
+        assert_eq!(row.cells.iter().position(|cell| cell.text == "ד"), Some(76));
+        assert_eq!(
+            row.cells
+                .iter()
+                .filter(|cell| cell.width != CellWidth::Continuation)
+                .map(|cell| cell.text.as_str())
+                .collect::<String>()
+                .trim(),
+            "דגבא"
+        );
+    }
 }
 
 #[test]

@@ -273,7 +273,7 @@ fn resolutions_for_recovery(tokens: Vec<Token>) -> Option<Vec<Resolution>> {
 
 fn preferred_base(tokens: &[Token]) -> Option<Level> {
     let text = text_of(tokens);
-    let rtl = text.chars().filter(|ch| is_rtl(*ch)).count();
+    let rtl = text.chars().filter(|ch| is_rtl_char(*ch)).count();
     let ltr = text.chars().filter(|ch| ch.is_ascii_alphabetic()).count();
     (rtl > 0 && rtl >= ltr).then(Level::rtl)
 }
@@ -511,7 +511,7 @@ fn token_width(token: &Token) -> usize {
 fn contains_rtl(tokens: &[Token]) -> bool {
     tokens
         .iter()
-        .any(|token| token.cell.text.chars().any(is_rtl))
+        .any(|token| token.cell.text.chars().any(is_rtl_char))
 }
 
 fn text_of(tokens: &[Token]) -> String {
@@ -533,7 +533,7 @@ fn is_space(token: &Token) -> bool {
     token.cell.text.chars().all(char::is_whitespace)
 }
 
-fn is_rtl(ch: char) -> bool {
+pub fn is_rtl_char(ch: char) -> bool {
     matches!(ch as u32, 0x0590..=0x08ff | 0xfb1d..=0xfdff | 0xfe70..=0xfeff)
 }
 

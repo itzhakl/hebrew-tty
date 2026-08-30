@@ -2,6 +2,9 @@
 
 use std::error::Error;
 
+use hebrew_tty::classify::ExecutionPath;
+use hebrew_tty::config::Mode;
+
 use crate::cli::Command;
 
 #[cfg(target_os = "linux")]
@@ -14,8 +17,8 @@ pub struct WindowSize {
 }
 
 #[cfg(target_os = "linux")]
-pub fn run(command: Command) -> Result<i32, Box<dyn Error>> {
-    linux::run(command)
+pub fn run(command: Command, path: ExecutionPath, mode: Mode) -> Result<i32, Box<dyn Error>> {
+    linux::run(command, path, mode)
 }
 
 #[cfg(not(target_os = "linux"))]

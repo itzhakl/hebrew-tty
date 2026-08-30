@@ -32,17 +32,29 @@ impl<W: Write> Renderer<W> {
         path: &ExecutionPath,
         mode: Mode,
     ) -> io::Result<RepaintSummary> {
+        self.repaint_dirty(screen, path, mode, &[])
+    }
+
+    pub fn repaint_dirty(
+        &mut self,
+        screen: &ScreenSnapshot,
+        path: &ExecutionPath,
+        mode: Mode,
+        invalidated_rows: &[u16],
+    ) -> io::Result<RepaintSummary> {
         let (rows, maps) = compose_layout(screen, path, mode);
         let dirty = rows
             .iter()
             .enumerate()
             .filter_map(|(index, row)| {
-                (self
-                    .previous
-                    .as_ref()
-                    .and_then(|previous| previous.get(index))
-                    != Some(row))
-                .then_some(index as u16)
+                let row_index = index as u16;
+                (invalidated_rows.contains(&row_index)
+                    || self
+                        .previous
+                        .as_ref()
+                        .and_then(|previous| previous.get(index))
+                        != Some(row))
+                .then_some(row_index)
             })
             .collect::<Vec<_>>();
         let cursor = mapped_cursor(screen, &maps);
@@ -67,6 +79,10 @@ impl<W: Write> Renderer<W> {
             rows: dirty,
             cursor,
         })
+    }
+
+    pub fn writer_mut(&mut self) -> &mut W {
+        &mut self.writer
     }
 
     pub fn into_inner(self) -> W {

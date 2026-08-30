@@ -102,6 +102,16 @@ pub enum TerminalError {
     ZeroSize,
 }
 
+impl std::fmt::Display for TerminalError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ZeroSize => formatter.write_str("terminal dimensions must be non-zero"),
+        }
+    }
+}
+
+impl std::error::Error for TerminalError {}
+
 pub struct TerminalModel {
     term: Term<VoidListener>,
     processor: ansi::Processor,
