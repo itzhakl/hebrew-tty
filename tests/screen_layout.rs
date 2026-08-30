@@ -1,3 +1,6 @@
+use hebrew_tty::classify::{Confidence, ExecutionPath, Order, Wrapping};
+use hebrew_tty::config::Mode;
+use hebrew_tty::layout::{layout_row, layout_rows, LayoutResult};
 use hebrew_tty::terminal::{CellWidth, Color, PaneSpan, TerminalError, TerminalModel};
 use serde::Deserialize;
 
@@ -197,6 +200,214 @@ fn scroll_regions_affect_only_the_region() {
     assert_eq!(row_text(&model, 1), "three");
     assert_eq!(row_text(&model, 2), "four");
     assert_eq!(row_text(&model, 4), "five");
+}
+
+#[test]
+fn auto_mode_preserves_unknown_rows_exactly() {
+    let mut model = TerminalModel::new(2, 8).unwrap();
+    model.feed("אבגד".as_bytes());
+    let row = &model.snapshot().physical_rows[0];
+    let result = layout_row(row, pane(8), &unknown_path(), Mode::Auto);
+
+    assert_eq!(result.cells, row.cells);
+    assert!(!result.transformed);
+    assert!(!result.right_aligned);
+}
+
+#[test]
+fn logical_rows_are_reordered_mirrored_and_right_aligned() {
+    let mut model = TerminalModel::new(2, 20).unwrap();
+    model.feed("שלום (בדיקה)".as_bytes());
+    let snapshot = model.snapshot();
+    let result = layout_row(
+        &snapshot.physical_rows[0],
+        pane(20),
+        &verified_path(Order::Logical),
+        Mode::Auto,
+    );
+
+    assert_eq!(layout_text(&result), "(הקידב) םולש");
+    assert!(result.right_aligned);
+    assert_eq!(first_nonempty(&result), 8);
+    assert_eq!(result.logical_text.as_deref(), Some("שלום (בדיקה)"));
+}
+
+#[test]
+fn visual_rows_recover_verified_mixed_content_before_layout() {
+    for (logical, painted) in [
+        ("❯\u{a0}שלום עולם", "❯\u{a0}םלוע םולש"),
+        ("❯\u{a0}שלום, מה נשמע.", "❯\u{a0}.עמשנ המ ,םולש"),
+        (
+            "❯\u{a0}קובץ src/auth.ts שורה 42",
+            "❯\u{a0}42 הרוש src/auth.ts ץבוק",
+        ),
+    ] {
+        let mut logical_model = TerminalModel::new(2, 40).unwrap();
+        logical_model.feed(logical.as_bytes());
+        let logical_snapshot = logical_model.snapshot();
+        let expected = layout_row(
+            &logical_snapshot.physical_rows[0],
+            pane(40),
+            &verified_path(Order::Logical),
+            Mode::Auto,
+        );
+
+        let mut visual_model = TerminalModel::new(2, 40).unwrap();
+        visual_model.feed(painted.as_bytes());
+        let visual_snapshot = visual_model.snapshot();
+        let actual = layout_row(
+            &visual_snapshot.physical_rows[0],
+            pane(40),
+            &verified_path(Order::Visual),
+            Mode::Auto,
+        );
+
+        assert_eq!(actual.cells, expected.cells, "{logical}");
+        assert_eq!(actual.logical_text.as_deref(), Some(logical), "{logical}");
+    }
+}
+
+#[test]
+fn post_bidi_wrapping_is_recovered_before_per_row_resolution() {
+    let mut model = TerminalModel::new(3, 4).unwrap();
+    model.feed("חזוהדגבא".as_bytes());
+    let snapshot = model.snapshot();
+    assert_eq!(row_text(&model, 0), "חזוה");
+    assert_eq!(row_text(&model, 1), "דגבא");
+    assert!(snapshot.physical_rows[0].soft_wrapped);
+
+    let results = layout_rows(
+        &snapshot.physical_rows[..2],
+        pane(4),
+        &verified_path(Order::Visual),
+        Mode::Auto,
+    );
+
+    assert_eq!(
+        results.iter().map(layout_text).collect::<Vec<_>>(),
+        ["דגבא", "חזוה"]
+    );
+    assert_eq!(results[0].logical_text.as_deref(), Some("אבגדהוזח"));
+}
+
+#[test]
+fn wrapped_pane_layout_preserves_each_physical_rows_other_panes() {
+    let mut model = TerminalModel::new(2, 8).unwrap();
+    model.feed("\x1b[1;1HA│\x1b[1;5Hחזוה\x1b[2;1HB│\x1b[2;5Hדגבא".as_bytes());
+    let mut rows = model.snapshot().physical_rows;
+    rows[0].soft_wrapped = true;
+    let results = layout_rows(
+        &rows,
+        PaneSpan {
+            start_col: 4,
+            end_col: 8,
+        },
+        &verified_path(Order::Visual),
+        Mode::Auto,
+    );
+
+    assert_eq!(results[0].cells[0].text, "A");
+    assert_eq!(results[1].cells[0].text, "B");
+    assert_eq!(results[0].cells[1].text, "│");
+    assert_eq!(results[1].cells[1].text, "│");
+}
+
+#[test]
+fn pane_alignment_and_table_cell_layout_keep_rules_fixed() {
+    let mut split = TerminalModel::new(2, 12).unwrap();
+    split.feed("L│שלום".as_bytes());
+    let split_snapshot = split.snapshot();
+    let result = layout_row(
+        &split_snapshot.physical_rows[0],
+        PaneSpan {
+            start_col: 2,
+            end_col: 12,
+        },
+        &verified_path(Order::Logical),
+        Mode::Auto,
+    );
+    assert_eq!(result.cells[1].text, "│");
+    assert_eq!(first_nonempty_from(&result, 2), 8);
+    assert_eq!(layout_text(&result), "L│םולש");
+
+    let mut table = TerminalModel::new(2, 12).unwrap();
+    table.feed("│שלום│".as_bytes());
+    let table_snapshot = table.snapshot();
+    let table_result = layout_row(
+        &table_snapshot.physical_rows[0],
+        pane(12),
+        &verified_path(Order::Logical),
+        Mode::Auto,
+    );
+    assert_eq!(layout_text(&table_result), "│םולש│");
+    assert!(!table_result.right_aligned);
+}
+
+#[test]
+fn reordered_glyphs_keep_their_original_style() {
+    let mut model = TerminalModel::new(2, 8).unwrap();
+    model.feed("\x1b[31;44mא\x1b[39mבגד    ".as_bytes());
+    let snapshot = model.snapshot();
+    let result = layout_row(
+        &snapshot.physical_rows[0],
+        pane(8),
+        &verified_path(Order::Logical),
+        Mode::Auto,
+    );
+    let aleph = result.cells.iter().find(|cell| cell.text == "א").unwrap();
+    assert_eq!(aleph.style.foreground, Color::Indexed(1));
+    assert!(result
+        .cells
+        .iter()
+        .all(|cell| cell.style.background == Color::Indexed(4)));
+}
+
+fn verified_path(order: Order) -> ExecutionPath {
+    ExecutionPath {
+        order: Some(order),
+        wrapping: Some(Wrapping::PostBidi),
+        confidence: Confidence::Verified,
+        evidence: Vec::new(),
+    }
+}
+
+fn unknown_path() -> ExecutionPath {
+    ExecutionPath {
+        order: None,
+        wrapping: None,
+        confidence: Confidence::Unknown,
+        evidence: Vec::new(),
+    }
+}
+
+fn pane(cols: u16) -> PaneSpan {
+    PaneSpan {
+        start_col: 0,
+        end_col: cols,
+    }
+}
+
+fn layout_text(result: &LayoutResult) -> String {
+    result
+        .cells
+        .iter()
+        .filter(|cell| cell.width != CellWidth::Continuation)
+        .map(|cell| cell.text.as_str())
+        .collect::<String>()
+        .trim_end()
+        .to_owned()
+}
+
+fn first_nonempty(result: &LayoutResult) -> usize {
+    first_nonempty_from(result, 0)
+}
+
+fn first_nonempty_from(result: &LayoutResult, start: usize) -> usize {
+    result.cells[start..]
+        .iter()
+        .position(|cell| !cell.text.is_empty())
+        .map(|offset| start + offset)
+        .unwrap()
 }
 
 #[test]
