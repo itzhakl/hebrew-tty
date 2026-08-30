@@ -6,7 +6,7 @@ use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_hebrew-tty")
@@ -44,22 +44,28 @@ fn help_and_errors_have_stable_statuses() {
     assert!(help.status.success());
     assert_eq!(
         String::from_utf8(help.stdout).unwrap(),
-        "usage: hebrew-tty [--as NAME] <command> [args...]\n\n  --as NAME   run the command under that process name; herdr finds an\n              agent pane by it, and a versioned build name is unknown\n"
+        "usage: hebrew-tty [--mode MODE] [--diagnostics PATH] [--as NAME] <command> [args...]\n\n  --mode MODE         auto, logical, visual, or passthrough\n  --diagnostics PATH  append structured JSON diagnostics\n  --as NAME           run the command under that process name; herdr finds an\n                      agent pane by it, and a versioned build name is unknown\n"
     );
 
     let missing = run(&[]);
     assert_eq!(missing.status.code(), Some(2));
     assert_eq!(
         String::from_utf8(missing.stderr).unwrap(),
-        "hebrew-tty: missing command\nusage: hebrew-tty [--as NAME] <command> [args...]\n"
+        "hebrew-tty: missing command\nusage: hebrew-tty [--mode MODE] [--diagnostics PATH] [--as NAME] <command> [args...]\n"
     );
 
     let missing_name = run(&["--as"]);
     assert_eq!(missing_name.status.code(), Some(2));
     assert_eq!(
         String::from_utf8(missing_name.stderr).unwrap(),
-        "hebrew-tty: --as requires a name\nusage: hebrew-tty [--as NAME] <command> [args...]\n"
+        "hebrew-tty: --as requires a name\nusage: hebrew-tty [--mode MODE] [--diagnostics PATH] [--as NAME] <command> [args...]\n"
     );
+
+    let invalid_mode = run(&["--mode", "guess", "true"]);
+    assert_eq!(invalid_mode.status.code(), Some(2));
+    assert!(String::from_utf8(invalid_mode.stderr)
+        .unwrap()
+        .contains("mode must be auto, logical, visual, or passthrough"));
 }
 
 #[test]
@@ -67,6 +73,183 @@ fn passthrough_preserves_bytes_and_exit_status() {
     let output = run(&["sh", "-c", "printf '\\001plain \\377\\n'; exit 37"]);
     assert_eq!(output.stdout, b"\x01plain \xff\r\n");
     assert_eq!(output.status.code(), Some(37));
+}
+
+#[test]
+fn mode_and_diagnostics_options_apply_before_launch() {
+    let dir = temp_dir("diagnostics");
+    let diagnostics = dir.join("events.jsonl");
+    let output = Command::new(binary())
+        .args(["--mode", "passthrough", "--diagnostics"])
+        .arg(&diagnostics)
+        .args(["sh", "-c", "printf ok"])
+        .output()
+        .unwrap();
+    let record: serde_json::Value =
+        serde_json::from_slice(&fs::read(&diagnostics).unwrap()).unwrap();
+    fs::remove_dir_all(dir).unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"ok");
+    assert_eq!(record["selected_mode"], "passthrough");
+    assert_eq!(record["row_disposition"], "pass_through");
+}
+
+#[test]
+fn auto_mode_requires_the_measured_agent_version() {
+    let dir = temp_dir("agent-version");
+    let agent = dir.join("claude");
+    let diagnostics = dir.join("events.jsonl");
+    let descendant_pid = dir.join("descendant.pid");
+    fs::write(
+        &agent,
+        "#!/bin/sh\nif [ \"${1:-}\" = --version ]; then sleep 30 & echo $! > \"$DESCENDANT_PID\"; echo '2.1.251 (Claude Code)'; else printf launched; fi\n",
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&agent).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&agent, permissions).unwrap();
+
+    let started = Instant::now();
+    let output = Command::new(binary())
+        .args(["--diagnostics"])
+        .arg(&diagnostics)
+        .arg(&agent)
+        .env("DESCENDANT_PID", &descendant_pid)
+        .output()
+        .unwrap();
+    let elapsed = started.elapsed();
+    let record: serde_json::Value =
+        serde_json::from_slice(&fs::read(&diagnostics).unwrap()).unwrap();
+    let descendant = fs::read_to_string(&descendant_pid).unwrap();
+    let descendant_proc = PathBuf::from(format!("/proc/{}", descendant.trim()));
+    for _ in 0..100 {
+        if !descendant_proc.exists() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    fs::remove_dir_all(dir).unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"launched");
+    assert!(elapsed < Duration::from_secs(3));
+    assert!(
+        !descendant_proc.exists(),
+        "version-probe descendant survived"
+    );
+    assert_eq!(record["confidence"], "verified");
+    assert_eq!(record["row_disposition"], "recover_visual");
+}
+
+#[test]
+fn version_probe_bounds_output_from_detached_descendants() {
+    let dir = temp_dir("detached-version-probe");
+    let agent = dir.join("claude");
+    let diagnostics = dir.join("events.jsonl");
+    let descendant_pid = dir.join("detached.pid");
+    fs::write(
+        &agent,
+        "#!/bin/sh\nif [ \"${1:-}\" = --version ]; then setsid yes x & echo $! > \"$DETACHED_PID\"; sleep 0.1; echo '2.1.251 (Claude Code)'; else printf launched; fi\n",
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&agent).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&agent, permissions).unwrap();
+
+    let started = Instant::now();
+    let output = Command::new(binary())
+        .args(["--diagnostics"])
+        .arg(&diagnostics)
+        .arg(&agent)
+        .env("DETACHED_PID", &descendant_pid)
+        .output()
+        .unwrap();
+    let elapsed = started.elapsed();
+    let record: serde_json::Value =
+        serde_json::from_slice(&fs::read(&diagnostics).unwrap()).unwrap();
+    let descendant = fs::read_to_string(&descendant_pid).unwrap();
+    let descendant_proc = PathBuf::from(format!("/proc/{}", descendant.trim()));
+    for _ in 0..100 {
+        if !descendant_proc.exists() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    fs::remove_dir_all(dir).unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"launched");
+    assert!(elapsed < Duration::from_secs(3));
+    assert!(!descendant_proc.exists(), "detached writer survived");
+    assert_eq!(record["confidence"], "unknown");
+}
+
+#[test]
+fn diagnostics_reject_terminal_stream_aliases() {
+    for path in [
+        "/dev/stdout",
+        "/dev/stderr",
+        "/proc/self/fd/1",
+        "/proc/self/fd/2",
+    ] {
+        let output = Command::new(binary())
+            .args(["--diagnostics", path, "sh", "-c", "printf launched"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{path}");
+        assert!(output.stdout.is_empty(), "{path}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("diagnostics path must"), "{path}: {stderr}");
+        assert!(!stderr.contains("\"command\""), "{path}: {stderr}");
+    }
+}
+
+#[test]
+fn diagnostics_reject_a_fifo_without_blocking() {
+    let dir = temp_dir("diagnostics-fifo");
+    let path = dir.join("events.fifo");
+    assert!(Command::new("mkfifo")
+        .arg(&path)
+        .status()
+        .unwrap()
+        .success());
+
+    let started = Instant::now();
+    let output = Command::new(binary())
+        .args(["--diagnostics"])
+        .arg(&path)
+        .arg("true")
+        .output()
+        .unwrap();
+    let elapsed = started.elapsed();
+    fs::remove_dir_all(dir).unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(elapsed < Duration::from_secs(1));
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn diagnostics_reject_a_regular_file_used_for_terminal_output() {
+    let dir = temp_dir("diagnostics-output-alias");
+    let path = dir.join("combined.log");
+    let output_file = fs::File::create(&path).unwrap();
+    let output = Command::new(binary())
+        .args(["--diagnostics"])
+        .arg(&path)
+        .args(["sh", "-c", "printf launched"])
+        .stdout(output_file)
+        .output()
+        .unwrap();
+    let contents = fs::read(&path).unwrap();
+    fs::remove_dir_all(dir).unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(contents.is_empty());
+    assert!(String::from_utf8(output.stderr)
+        .unwrap()
+        .contains("diagnostics path must not alias stdout or stderr"));
 }
 
 #[test]
