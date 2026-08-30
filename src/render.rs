@@ -51,6 +51,7 @@ impl<W: Write> Renderer<W> {
             .filter_map(|(index, row)| {
                 let row_index = index as u16;
                 (invalidated_rows.contains(&row_index)
+                    || (relative_first_repaint && screen.physical_rows.get(index) != Some(row))
                     || (!relative_first_repaint
                         && self
                             .previous
@@ -89,7 +90,23 @@ impl<W: Write> Renderer<W> {
             b"\x1b[?25l"
         })?;
         self.writer.flush()?;
-        self.previous = Some(rows);
+        let painted = dirty
+            .iter()
+            .copied()
+            .map(usize::from)
+            .collect::<std::collections::BTreeSet<_>>();
+        self.previous = Some(
+            rows.into_iter()
+                .enumerate()
+                .map(|(index, row)| {
+                    if relative_first_repaint && !painted.contains(&index) {
+                        screen.physical_rows[index].clone()
+                    } else {
+                        row
+                    }
+                })
+                .collect(),
+        );
 
         Ok(RepaintSummary {
             rows: dirty,
