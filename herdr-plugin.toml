@@ -1,0 +1,45 @@
+id = "hebrew-tty.terminal-proxy"
+name = "Hebrew Terminal Proxy"
+version = "0.1.0"
+min_herdr_version = "0.8.2"
+description = "Launch coding agents through the Hebrew terminal proxy"
+platforms = ["linux"]
+
+[[actions]]
+id = "claude"
+title = "Open Claude Code with Hebrew TTY"
+contexts = ["workspace"]
+command = ["plugins/herdr-terminal-proxy/launch.sh", "open", "claude"]
+
+[[actions]]
+id = "pi"
+title = "Open Pi with Hebrew TTY"
+contexts = ["workspace"]
+command = ["plugins/herdr-terminal-proxy/launch.sh", "open", "pi"]
+
+[[actions]]
+id = "codex"
+title = "Open Codex with Hebrew TTY"
+contexts = ["workspace"]
+command = ["plugins/herdr-terminal-proxy/launch.sh", "open", "codex"]
+
+[[panes]]
+id = "claude"
+title = "Claude Code — Hebrew TTY"
+placement = "split"
+platforms = ["linux"]
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/plugins/herdr-terminal-proxy/launch.sh\" run claude"]
+
+[[panes]]
+id = "pi"
+title = "Pi — Hebrew TTY"
+placement = "split"
+platforms = ["linux"]
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/plugins/herdr-terminal-proxy/launch.sh\" run pi"]
+
+[[panes]]
+id = "codex"
+title = "Codex — Hebrew TTY"
+placement = "split"
+platforms = ["linux"]
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/plugins/herdr-terminal-proxy/launch.sh\" run codex"]
