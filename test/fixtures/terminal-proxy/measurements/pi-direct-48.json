@@ -1,0 +1,48 @@
+{
+  "schema_version": 2,
+  "recorded_at": "2026-08-30T04:08:31.312372Z",
+  "agent": "pi",
+  "agent_version": "0.84.4",
+  "host": "direct",
+  "terminal": {
+    "rows": 30,
+    "columns": 48,
+    "term": "xterm-256color",
+    "herdr_env": false
+  },
+  "provenance": {
+    "path": "direct_pty",
+    "controlling_tty": true,
+    "isolated_session": false
+  },
+  "probe": "HTP_A אבגדה HTP_B 0123456789 abcDEF HTP_C וזחטי HTP_D",
+  "events": [
+    {
+      "kind": "resize",
+      "elapsed_ms": 0,
+      "rows": 30,
+      "columns": 48
+    },
+    {
+      "kind": "input",
+      "elapsed_ms": 8018,
+      "text": "HTP_A אבגדה HTP_B 0123456789 abcDEF HTP_C וזחטי HTP_D",
+      "submitted": false
+    }
+  ],
+  "observed": {
+    "probe_fragments": [
+      "HTP_A הדגבא HTP_B 0123456789",
+      "abcDEFHTP_CיטחזוHTP_D"
+    ],
+    "source": "reconstructed_terminal_rows"
+  },
+  "classification": {
+    "order": "visual",
+    "wrapping": "post_bidi",
+    "evidence": [
+      "Hebrew order by reconstructed row: row 1=visual, row 2=visual",
+      "wrapped marker rows A/B/C/D=[0, 0, 1, 1] identify post_bidi at 48 columns"
+    ]
+  }
+}

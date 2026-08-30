@@ -1,0 +1,48 @@
+{
+  "schema_version": 2,
+  "recorded_at": "2026-08-30T04:08:31.216420Z",
+  "agent": "codex",
+  "agent_version": "codex-cli 0.151.0",
+  "host": "direct",
+  "terminal": {
+    "rows": 30,
+    "columns": 48,
+    "term": "xterm-256color",
+    "herdr_env": false
+  },
+  "provenance": {
+    "path": "direct_pty",
+    "controlling_tty": true,
+    "isolated_session": false
+  },
+  "probe": "HTP_A אבגדה HTP_B 0123456789 abcDEF HTP_C וזחטי HTP_D",
+  "events": [
+    {
+      "kind": "resize",
+      "elapsed_ms": 0,
+      "rows": 30,
+      "columns": 48
+    },
+    {
+      "kind": "input",
+      "elapsed_ms": 8091,
+      "text": "HTP_A אבגדה HTP_B 0123456789 abcDEF HTP_C וזחטי HTP_D",
+      "submitted": false
+    }
+  ],
+  "observed": {
+    "probe_fragments": [
+      "HTP_A אבגדה HTP_B 0123456789 abcDEF HTP_C",
+      "וזחטי HTP_D"
+    ],
+    "source": "reconstructed_terminal_rows"
+  },
+  "classification": {
+    "order": "logical",
+    "wrapping": "post_bidi",
+    "evidence": [
+      "Hebrew order by reconstructed row: row 1=logical, row 2=logical",
+      "wrapped marker rows A/B/C/D=[0, 0, 0, 1] identify post_bidi at 48 columns"
+    ]
+  }
+}

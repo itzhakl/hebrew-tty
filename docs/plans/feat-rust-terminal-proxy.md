@@ -66,7 +66,7 @@
 
 | # | requirement | how it is proven | state |
 |---|-------------|------------------|-------|
-| 1 | Direct and Herdr-hosted Claude Code, Pi, and Codex recordings identify logical/visual order and pre-/post-wrap behavior before transformation code is enabled. [S3, A1, V1] | `cargo test --test measurements` against probe-recorded fixtures, plus `python3 tools/terminal_proxy_probe.py verify test/fixtures/terminal-proxy/measurements` | failing |
+| 1 | Direct and Herdr-hosted Claude Code, Pi, and Codex recordings identify logical/visual order and pre-/post-wrap behavior before transformation code is enabled. [S3, A1, V1] | `cargo test --test measurements` against probe-recorded fixtures, plus `python3 tools/terminal_proxy_probe.py verify test/fixtures/terminal-proxy/measurements` | passing |
 | 2 | At supported widths, Hebrew and mixed Hebrew/English/code retain logical top-to-bottom wrapped-row order, readable per-row display order, and pane-right alignment. [G1, D4, V2] | `cargo test --test screen_layout` | failing |
 | 3 | The caret coordinate stays attached to the edited grapheme through typing, horizontal/vertical movement, streamed replacement, wrapping, and resize. [G2, D4, V3] | `cargo test --test caret_mapping` and `tools/smoke-ptyxis.sh` | failing |
 | 4 | `auto` leaves unclassified and ambiguous output byte-for-byte unchanged with a diagnostic, while `logical`, `visual`, and `passthrough` overrides produce their specified paths. [A2, D3, V4] | `cargo test --test safe_modes` | failing |
@@ -106,7 +106,7 @@
 
 ## Steps
 
-- [ ] 1. `tools/terminal_proxy_probe.py`, `test/fixtures/terminal-proxy/measurements/*.json`, and `tests/measurements.rs` — implement the recording schema and capture the six direct/Herdr-hosted agent paths at multiple widths; prove the untouched recordings classify order and wrapping with `cargo test --test measurements && python3 tools/terminal_proxy_probe.py verify test/fixtures/terminal-proxy/measurements` before adding any transformation logic. [S3, A1, V1]
+- [x] 1. `tools/terminal_proxy_probe.py`, `test/fixtures/terminal-proxy/measurements/*.json`, and `tests/measurements.rs` — implement the recording schema and capture the six direct/Herdr-hosted agent paths at multiple widths; prove the untouched recordings classify order and wrapping with `cargo test --test measurements && python3 tools/terminal_proxy_probe.py verify test/fixtures/terminal-proxy/measurements` before adding any transformation logic. [S3, A1, V1]
 - [ ] 2. `Cargo.toml`, `src/main.rs`, `src/cli.rs`, `src/platform/{mod.rs,linux.rs}`, `bin/hebrew-tty`, and `tests/cli.rs` — establish the smallest reviewable Rust slice: transparent Linux PTY transport, resize/signal/exit propagation, argv0 compatibility, and byte-for-byte pass-through; prove it with `cargo test --test cli passthrough`. [C1, S1, D2, V4, V5]
 - [ ] 3. `src/config.rs`, `src/classify.rs`, `src/diagnostics.rs`, and `tests/safe_modes.rs` — load XDG command policies, classify only the recorded execution paths, surface evidence, and enforce `auto`/override behavior while transformation remains a no-op; prove safe fallback first with `cargo test --test safe_modes`. [A2, D3, Q1, V1, V4]
 - [ ] 4. `src/terminal.rs`, `test/fixtures/terminal-proxy/screens/*.json`, and `tests/screen_layout.rs` — build VT cell/style/cursor state, pane spans, dirty-row tracking, and resize/reflow replay against measured streams without BiDi mutation; prove parsing stability with `cargo test --test screen_layout`. [S1, D4, V2]

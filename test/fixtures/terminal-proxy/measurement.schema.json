@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hebrew-tty.local/terminal-proxy-measurement.schema.json",
+  "title": "Terminal proxy measurement",
+  "type": "object",
+  "required": ["schema_version", "recorded_at", "agent", "agent_version", "host", "terminal", "provenance", "probe", "events", "observed", "classification"],
+  "properties": {
+    "schema_version": {"const": 2},
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "agent": {"enum": ["claude", "pi", "codex"]},
+    "agent_version": {"type": "string", "minLength": 1},
+    "host": {"enum": ["direct", "herdr"]},
+    "terminal": {
+      "type": "object",
+      "required": ["rows", "columns", "term", "herdr_env"],
+      "properties": {
+        "rows": {"const": 30},
+        "columns": {"enum": [48, 80]},
+        "term": {"const": "xterm-256color"},
+        "herdr_env": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "provenance": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["path", "controlling_tty", "isolated_session"],
+          "properties": {
+            "path": {"const": "direct_pty"},
+            "controlling_tty": {"const": true},
+            "isolated_session": {"const": false}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["path", "controlling_tty", "isolated_session", "herdr_version", "session_verified", "pane_verified", "agent_process_verified"],
+          "properties": {
+            "path": {"const": "herdr_outer_screen"},
+            "controlling_tty": {"const": true},
+            "isolated_session": {"const": true},
+            "herdr_version": {"type": "string", "minLength": 1},
+            "session_verified": {"const": true},
+            "pane_verified": {"const": true},
+            "agent_process_verified": {"const": true}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "probe": {"const": "HTP_A אבגדה HTP_B 0123456789 abcDEF HTP_C וזחטי HTP_D"},
+    "events": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["kind", "elapsed_ms", "rows", "columns"],
+            "properties": {
+              "kind": {"const": "resize"},
+              "elapsed_ms": {"type": "integer", "minimum": 0},
+              "rows": {"type": "integer", "minimum": 1},
+              "columns": {"type": "integer", "minimum": 1}
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["kind", "elapsed_ms"],
+            "properties": {
+              "kind": {"const": "agent_launch"},
+              "elapsed_ms": {"type": "integer", "minimum": 0}
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["kind", "elapsed_ms", "dialog"],
+            "properties": {
+              "kind": {"const": "known_dialog_dismissed"},
+              "elapsed_ms": {"type": "integer", "minimum": 0},
+              "dialog": {"type": "string", "minLength": 1}
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["kind", "elapsed_ms", "text", "submitted"],
+            "properties": {
+              "kind": {"const": "input"},
+              "elapsed_ms": {"type": "integer", "minimum": 0},
+              "text": {"const": "HTP_A אבגדה HTP_B 0123456789 abcDEF HTP_C וזחטי HTP_D"},
+              "submitted": {"const": false}
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "observed": {
+      "type": "object",
+      "required": ["probe_fragments", "source"],
+      "properties": {
+        "probe_fragments": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "source": {"const": "reconstructed_terminal_rows"}
+      },
+      "additionalProperties": false
+    },
+    "classification": {
+      "type": "object",
+      "required": ["order", "wrapping", "evidence"],
+      "properties": {
+        "order": {"enum": ["logical", "visual"]},
+        "wrapping": {"enum": ["pre_bidi", "post_bidi", "not_observed"]},
+        "evidence": {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 1}}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
