@@ -7,6 +7,17 @@ and lost every Herdr feature keyed to one. `--as` names the proxy itself with
 `PR_SET_NAME`, not just the child. The name is cut to 15 characters, which is
 all `comm` holds.
 
+`--as` names the agent for the classifier too, not just for Herdr. A launcher
+that resolves `claude` to `versions/2.1.252` hands over a path whose file name
+is a version number, which matches no recording - so the whole filter switched
+off for exactly the setup that needs it most.
+
+Freeing the version number is not freeing the product. `sleep --version`
+answers, and once the number stopped being compared its answer classified a
+`sleep` as Claude Code. What is compared now is the version string with its
+digits and dots removed: `(Claude Code)` must still be there, and a recording
+that carries a bare number requires a bare number back.
+
 A recorded agent version is a floor, not a lock. Pinning it to the exact
 string meant every upgrade silently turned the whole filter off - `Auto` saw an
 unverified path and passed every row through, which reads as "Hebrew stopped
