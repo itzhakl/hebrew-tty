@@ -90,6 +90,26 @@ impl ExecutionPath {
     }
 }
 
+fn product_marker(version: &str) -> String {
+    version
+        .chars()
+        .filter(|character| !character.is_ascii_digit() && *character != '.')
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+
+fn reports_the_same_product(observed: &str, recorded: &str) -> bool {
+    let marker = product_marker(recorded);
+    if marker.is_empty() {
+        return observed
+            .split_whitespace()
+            .next()
+            .is_some_and(|first| first.chars().all(|c| c.is_ascii_digit() || c == '.'));
+    }
+    product_marker(observed) == marker
+}
+
 #[derive(Default)]
 pub struct Classifier;
 
@@ -124,6 +144,11 @@ impl Classifier {
         let Some(agent_version) = observed.agent_version.as_deref() else {
             return ExecutionPath::unknown("agent version evidence is missing");
         };
+        if !reports_the_same_product(agent_version, expected_version) {
+            return ExecutionPath::unknown(format!(
+                "agent version {agent_version} is not a build of {expected_version}"
+            ));
+        }
         let expected = ExecutionPath::verified(
             expected_order,
             &format!("{command}-{host_name}"),

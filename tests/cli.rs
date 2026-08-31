@@ -610,6 +610,58 @@ fn as_name_renames_the_proxy_so_herdr_can_find_the_pane() {
 }
 
 #[test]
+fn as_name_classifies_a_versioned_build_path() {
+    let dir = temp_dir("versioned-classify");
+    let versions = dir.join("versions");
+    fs::create_dir(&versions).unwrap();
+    let build = versions.join("2.1.252");
+    fs::write(
+        &build,
+        "#!/bin/sh\nif [ \"${1:-}\" = --version ]; then echo '2.1.252 (Claude Code)'; \
+         else printf launched; fi\n",
+    )
+    .unwrap();
+    fs::set_permissions(&build, PermissionsExt::from_mode(0o755)).unwrap();
+    let diagnostics = dir.join("diagnostics.json");
+    fs::write(&diagnostics, "").unwrap();
+
+    run(&[
+        "--diagnostics",
+        diagnostics.to_str().unwrap(),
+        "--as",
+        "claude",
+        build.to_str().unwrap(),
+    ]);
+    let record = fs::read_to_string(&diagnostics).unwrap();
+
+    assert!(record.contains("\"command\":\"claude\""), "{record}");
+    assert!(record.contains("\"confidence\":\"verified\""), "{record}");
+    assert!(
+        record.contains("\"row_disposition\":\"recover_visual\""),
+        "{record}"
+    );
+}
+
+#[test]
+fn a_versioned_build_path_without_as_stays_unclassified() {
+    let dir = temp_dir("versioned-unclassified");
+    let build = dir.join("2.1.252");
+    fs::write(&build, "#!/bin/sh\nprintf launched\n").unwrap();
+    fs::set_permissions(&build, PermissionsExt::from_mode(0o755)).unwrap();
+    let diagnostics = dir.join("diagnostics.json");
+    fs::write(&diagnostics, "").unwrap();
+
+    run(&[
+        "--diagnostics",
+        diagnostics.to_str().unwrap(),
+        build.to_str().unwrap(),
+    ]);
+    let record = fs::read_to_string(&diagnostics).unwrap();
+
+    assert!(record.contains("\"confidence\":\"unknown\""), "{record}");
+}
+
+#[test]
 fn a_proxy_without_as_keeps_its_own_process_name() {
     let output = run(&["sh", "-c", "cat /proc/$PPID/comm"]);
 
@@ -660,17 +712,22 @@ pid, fd = pty.fork()
 if pid == 0:
     os.execv(sys.argv[1], [sys.argv[1], '--as', 'claude', 'sleep', '5'])
 deadline = time.time() + 5
-child = None
+cmdline = b''
 while time.time() < deadline:
-    children = open(f'/proc/{pid}/task/{pid}/children').read().split()
-    if children:
-        child = children[0]
+    for child in open(f'/proc/{pid}/task/{pid}/children').read().split():
+        try:
+            name = open(f'/proc/{child}/cmdline', 'rb').read().split(b'\0')[0]
+        except OSError:
+            continue
+        if name.endswith(b'claude'):
+            cmdline = name
+            break
+    if cmdline:
         break
     time.sleep(.02)
-if child is None:
+if not cmdline:
     os.kill(pid, 9)
     raise SystemExit('child process did not start')
-cmdline = open(f'/proc/{child}/cmdline', 'rb').read().split(b'\0')[0]
 os.kill(pid, 15)
 os.waitpid(pid, 0)
 sys.stdout.buffer.write(cmdline)

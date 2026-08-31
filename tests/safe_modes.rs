@@ -75,6 +75,27 @@ fn an_agent_version_past_the_recording_keeps_the_recorded_order() {
 }
 
 #[test]
+fn another_products_version_string_is_not_an_agent() {
+    for reported in ["sleep (GNU coreutils) 9.5", "0.84.4", "git version 2.51.0"] {
+        let path = Classifier.observe(
+            OsStr::new("claude"),
+            Some(Host::Direct),
+            ObservedEvidence {
+                agent_version: Some(reported.to_owned()),
+                ..ObservedEvidence::default()
+            },
+        );
+
+        assert_eq!(path.confidence, Confidence::Unknown, "{reported}");
+        assert_eq!(
+            select_mode(Mode::Auto, &path).disposition,
+            RowDisposition::PassThrough,
+            "{reported}"
+        );
+    }
+}
+
+#[test]
 fn a_contradicting_row_still_overrides_an_unrecorded_version() {
     let path = Classifier.observe(
         OsStr::new("claude"),

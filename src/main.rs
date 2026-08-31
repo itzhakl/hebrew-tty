@@ -20,8 +20,8 @@ use hebrew_tty::classify::{select_mode, Classifier, Host, ObservedEvidence};
 use hebrew_tty::config::Config;
 use hebrew_tty::diagnostics::{DiagnosticRecord, Diagnostics};
 
-fn detect_agent_version(program: &std::ffi::OsStr) -> Option<String> {
-    let name = Path::new(program).file_name()?.to_str()?;
+fn detect_agent_version(program: &std::ffi::OsStr, agent_name: &std::ffi::OsStr) -> Option<String> {
+    let name = Path::new(agent_name).file_name()?.to_str()?;
     if !matches!(name, "claude" | "pi" | "codex") {
         return None;
     }
@@ -146,20 +146,25 @@ fn run(invocation: cli::Invocation) -> Result<i32, Box<dyn Error>> {
         Ok("herdr") => Host::Herdr,
         _ => Host::Direct,
     };
+    let agent_name = invocation
+        .command
+        .argv0
+        .clone()
+        .unwrap_or_else(|| invocation.command.program.clone());
     let path = Classifier.observe(
-        &invocation.command.program,
+        &agent_name,
         Some(host),
         ObservedEvidence {
-            agent_version: detect_agent_version(&invocation.command.program),
+            agent_version: detect_agent_version(&invocation.command.program, &agent_name),
             ..ObservedEvidence::default()
         },
     );
     let selection = select_mode(policy.mode, &path);
 
     if let Some(diagnostics_path) = invocation.diagnostics {
-        let command = Path::new(&invocation.command.program)
+        let command = Path::new(&agent_name)
             .file_name()
-            .unwrap_or(&invocation.command.program)
+            .unwrap_or(&agent_name)
             .to_string_lossy();
         let file = open_diagnostics(&diagnostics_path)?;
         Diagnostics::new(file).emit(&DiagnosticRecord::new(
