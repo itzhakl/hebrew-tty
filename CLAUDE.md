@@ -1,5 +1,12 @@
 # hebrew-tty
 
+Herdr reads the pane's own foreground process, and that process is the proxy,
+never the agent. The agent runs on the inner PTY the proxy opened, which Herdr
+cannot see at all - so a pane launched through the proxy detected as no agent
+and lost every Herdr feature keyed to one. `--as` names the proxy itself with
+`PR_SET_NAME`, not just the child. The name is cut to 15 characters, which is
+all `comm` holds.
+
 A recorded agent version is a floor, not a lock. Pinning it to the exact
 string meant every upgrade silently turned the whole filter off - `Auto` saw an
 unverified path and passed every row through, which reads as "Hebrew stopped

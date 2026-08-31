@@ -602,6 +602,22 @@ fn passthrough_child_has_controlling_tty_and_initial_dimensions() {
 }
 
 #[test]
+fn as_name_renames_the_proxy_so_herdr_can_find_the_pane() {
+    let output = run(&["--as", "claude", "sh", "-c", "cat /proc/$PPID/comm"]);
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "claude");
+}
+
+#[test]
+fn a_proxy_without_as_keeps_its_own_process_name() {
+    let output = run(&["sh", "-c", "cat /proc/$PPID/comm"]);
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "hebrew-tty");
+}
+
+#[test]
 fn passthrough_propagates_resize_from_parent_pty() {
     const DRIVER: &str = r#"
 import fcntl, os, pty, select, signal, struct, sys, termios, time

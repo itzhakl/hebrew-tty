@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::error::Error;
-use std::ffi::OsString;
+use std::ffi::{CString, OsStr, OsString};
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -360,7 +360,18 @@ fn screen_has_rtl(screen: &hebrew_tty::terminal::ScreenSnapshot) -> bool {
     rtl_rows(screen).next().is_some()
 }
 
+fn adopt_agent_process_name(argv0: Option<&OsStr>) {
+    let Some(name) = argv0.and_then(|value| value.to_str()) else {
+        return;
+    };
+    let truncated: String = name.chars().take(15).collect();
+    if let Ok(name) = CString::new(truncated) {
+        let _ = nix::sys::prctl::set_name(&name);
+    }
+}
+
 pub fn run(command: Command, path: ExecutionPath, mode: Mode) -> Result<i32, Box<dyn Error>> {
+    adopt_agent_process_name(command.argv0.as_deref());
     let resize_pending = Arc::new(AtomicBool::new(false));
     flag::register(SIGWINCH, Arc::clone(&resize_pending))?;
     let mut forwarded = Signals::new([SIGHUP, SIGINT, SIGQUIT, SIGTERM])?;
