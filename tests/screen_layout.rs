@@ -291,6 +291,267 @@ fn post_bidi_wrapping_is_recovered_before_per_row_resolution() {
 }
 
 #[test]
+fn hard_prose_rows_inherit_the_anchor_layout() {
+    let mut model = TerminalModel::new(4, 20).unwrap();
+    model.feed("\x1b[1;1Hשלום\x1b[2;1Henglish\x1b[3;1Habc אב".as_bytes());
+    let snapshot = model.snapshot();
+    let results = layout_rows(
+        &snapshot.physical_rows,
+        pane(20),
+        &verified_path(Order::Logical),
+        Mode::Auto,
+    );
+
+    assert!(results[0].right_aligned);
+    assert!(results[1].right_aligned);
+    assert_eq!(layout_text(&results[1]), "english");
+    assert_eq!(first_nonempty(&results[1]), 13);
+    assert_eq!(results[1].cells[19].text, "h");
+    assert!(results[2].right_aligned);
+    assert_eq!(results[2].cells[19].text, "c");
+}
+
+#[test]
+fn latin_opening_hebrew_majority_anchor_uses_preferred_base() {
+    let mut model = TerminalModel::new(4, 24).unwrap();
+    model.feed(b"\x1b[1;1Habc \xd7\x90\xd7\x91\xd7\x92\xd7\x93\xd7\x94\x1b[2;1Henglish");
+    let snapshot = model.snapshot();
+    let results = layout_rows(
+        &snapshot.physical_rows,
+        pane(24),
+        &verified_path(Order::Logical),
+        Mode::Auto,
+    );
+
+    assert!(results[0].right_aligned);
+    assert_eq!(first_nonempty(&results[0]), 15);
+    assert!(results[1].right_aligned);
+    assert_eq!(layout_text(&results[1]), "english");
+    assert_eq!(first_nonempty(&results[1]), 17);
+}
+
+#[test]
+fn unstyled_indented_code_breaks_inheritance_before_trimming() {
+    let mut model = TerminalModel::new(4, 24).unwrap();
+    model.feed("\x1b[1;1Hשלום\x1b[2;1H    const x = 1;\x1b[3;1Henglish".as_bytes());
+    let snapshot = model.snapshot();
+    let results = layout_rows(
+        &snapshot.physical_rows,
+        pane(24),
+        &verified_path(Order::Logical),
+        Mode::Auto,
+    );
+
+    assert_eq!(results[1].cells, snapshot.physical_rows[1].cells);
+    assert_eq!(layout_text(&results[1]), row_text(&model, 1));
+    assert_eq!(first_nonempty(&results[2]), 0);
+    assert!(!results[2].right_aligned);
+}
+
+#[test]
+fn terminal_tabs_mark_code_boundary_without_capturing_padding() {
+    let mut model = TerminalModel::new(4, 32).unwrap();
+    model.feed(b"\x1b[1;1H\xd7\xa9\xd7\x9c\xd7\x95\xd7\x9d\x1b[2;1H\tconst x = 1;\x1b[3;1Henglish");
+    let snapshot = model.snapshot();
+    assert!(snapshot.physical_rows[1].cells[..8]
+        .iter()
+        .all(|cell| cell.width == CellWidth::Empty));
+    assert_eq!(snapshot.physical_rows[1].cells[8].text, "c");
+    let results = layout_rows(
+        &snapshot.physical_rows,
+        pane(32),
+        &verified_path(Order::Logical),
+        Mode::Auto,
+    );
+
+    assert_eq!(results[1].cells, snapshot.physical_rows[1].cells);
+    assert_eq!(first_nonempty(&results[2]), 0);
+    assert!(!results[2].right_aligned);
+}
+
+#[test]
+fn right_alignment_padding_beyond_code_indent_keeps_prose_inheritance() {
+    let mut model = TerminalModel::new(3, 24).unwrap();
+    model.feed("\x1b[1;1Hשלום\x1b[2;1H            english\x1b[3;1Hlater".as_bytes());
+    let results = layout_rows(
+        &model.snapshot().physical_rows,
+        pane(24),
+        &verified_path(Order::Logical),
+        Mode::Auto,
+    );
+
+    assert!(results[1].right_aligned);
+    assert!(first_nonempty(&results[1]) > 4);
+    assert!(results[2].right_aligned);
+}
+
+#[test]
+fn visual_mixed_continuation_recovers_with_the_anchor_base() {
+    let mut logical_model = TerminalModel::new(3, 30).unwrap();
+    logical_model.feed("\x1b[1;1Hשלום\x1b[2;1Habc אב".as_bytes());
+    let logical_snapshot = logical_model.snapshot();
+    let expected = layout_rows(
+        &logical_snapshot.physical_rows,
+        pane(30),
+        &verified_path(Order::Logical),
+        Mode::Auto,
+    );
+
+    let mut visual_model = TerminalModel::new(3, 30).unwrap();
+    visual_model.feed(
+        format!(
+            "\x1b[1;1H{}\x1b[2;1H{}",
+            layout_text(&expected[0]).trim_start(),
+            layout_text(&expected[1]).trim_start()
+        )
+        .as_bytes(),
+    );
+    let visual_snapshot = visual_model.snapshot();
+    let actual = layout_rows(
+        &visual_snapshot.physical_rows,
+        pane(30),
+        &verified_path(Order::Visual),
+        Mode::Auto,
+    );
+
+    assert_eq!(actual[0].cells, expected[0].cells);
+    assert_eq!(actual[1].cells, expected[1].cells);
+    assert_eq!(actual[1].logical_text.as_deref(), Some("abc אב"));
+    assert!(actual[1].right_aligned);
+}
+
+#[test]
+fn hard_continuations_keep_glyph_metadata_and_order() {
+    let mut model = TerminalModel::new(3, 24).unwrap();
+    model.feed(
+        "\x1b[1;1Hשלום\x1b[2;1H\x1b[31meng\x1b[39m\x1b]8;;https://example.com\x07lish\x1b]8;;\x07"
+            .as_bytes(),
+    );
+    let snapshot = model.snapshot();
+    let results = layout_rows(
+        &snapshot.physical_rows,
+        pane(24),
+        &verified_path(Order::Logical),
+        Mode::Auto,
+    );
+
+    assert_eq!(layout_text(&results[1]), "english");
+    assert!(results[1].right_aligned);
+    assert_eq!(results[1].cells[17].text, "e");
+    assert_eq!(results[1].cells[17].style.foreground, Color::Indexed(1));
+    assert_eq!(
+        results[1].cells[20].hyperlink.as_deref(),
+        Some("https://example.com")
+    );
+}
+
+#[test]
+fn later_soft_wrap_fragments_do_not_reset_lexical_paragraphs() {
+    for fragment in ["https://example.com", "- item", "❯ prompt", "---"] {
+        let mut model = TerminalModel::new(4, 40).unwrap();
+        model.feed(format!("\x1b[1;1Hשלום\x1b[2;1H{fragment}\x1b[3;1Henglish").as_bytes());
+        let mut rows = model.snapshot().physical_rows;
+        rows[0].soft_wrapped = true;
+        let results = layout_rows(&rows, pane(40), &verified_path(Order::Logical), Mode::Auto);
+
+        assert!(results[2].right_aligned, "{fragment:?}");
+        assert!(first_nonempty(&results[2]) > 0, "{fragment:?}");
+    }
+}
+
+#[test]
+fn recognizable_non_prose_rows_break_paragraph_inheritance() {
+    let boundaries = [
+        "",
+        "- item",
+        "1. item",
+        "```",
+        "https://example.com",
+        "|a|",
+        "---",
+        "❯ ",
+        "\x1b]8;;https://example.com\x07linked\x1b]8;;\x07",
+        "\x1b[48;5;4mcode                    \x1b[0m",
+        "\x1b[7mui                      \x1b[0m",
+    ];
+    for boundary in boundaries {
+        let mut model = TerminalModel::new(4, 24).unwrap();
+        model.feed(format!("\x1b[1;1Hשלום\x1b[2;1H{boundary}\x1b[3;1Henglish").as_bytes());
+        let snapshot = model.snapshot();
+        let results = layout_rows(
+            &snapshot.physical_rows,
+            pane(24),
+            &verified_path(Order::Logical),
+            Mode::Auto,
+        );
+        assert_eq!(first_nonempty(&results[2]), 0, "{boundary:?}");
+        assert!(!results[2].right_aligned, "{boundary:?}");
+    }
+}
+
+#[test]
+fn viewport_top_is_an_independent_paragraph_anchor() {
+    let mut model = TerminalModel::new(3, 20).unwrap();
+    model.feed("\x1b[1;1Hשלום\x1b[2;1Henglish".as_bytes());
+    let snapshot = model.snapshot();
+    let results = layout_rows(
+        &snapshot.physical_rows[1..],
+        pane(20),
+        &verified_path(Order::Logical),
+        Mode::Auto,
+    );
+
+    assert_eq!(first_nonempty(&results[0]), 0);
+    assert!(!results[0].right_aligned);
+}
+
+#[test]
+fn paragraph_layout_is_pane_local() {
+    let mut model = TerminalModel::new(3, 21).unwrap();
+    model.feed("\x1b[1;1Hשלום\x1b[2;1Henglish\x1b[1;12Hleft\x1b[2;12Hright".as_bytes());
+    let snapshot = model.snapshot();
+    let left = layout_rows(
+        &snapshot.physical_rows,
+        PaneSpan {
+            start_col: 0,
+            end_col: 10,
+        },
+        &verified_path(Order::Logical),
+        Mode::Auto,
+    );
+    let right = layout_rows(
+        &snapshot.physical_rows,
+        PaneSpan {
+            start_col: 11,
+            end_col: 21,
+        },
+        &verified_path(Order::Logical),
+        Mode::Auto,
+    );
+
+    assert!(left[1].right_aligned);
+    assert_eq!(first_nonempty_from(&left[1], 0), 3);
+    assert_eq!(first_nonempty_from(&right[1], 11), 11);
+}
+
+#[test]
+fn unknown_path_preserves_paragraph_candidates_exactly() {
+    let mut model = TerminalModel::new(3, 20).unwrap();
+    model.feed("\x1b[1;1Hשלום\x1b[2;1Henglish".as_bytes());
+    let snapshot = model.snapshot();
+    let results = layout_rows(
+        &snapshot.physical_rows,
+        pane(20),
+        &unknown_path(),
+        Mode::Auto,
+    );
+
+    assert_eq!(results[0].cells, snapshot.physical_rows[0].cells);
+    assert_eq!(results[1].cells, snapshot.physical_rows[1].cells);
+    assert!(!results[1].transformed);
+}
+
+#[test]
 fn wrapped_pane_layout_preserves_each_physical_rows_other_panes() {
     let mut model = TerminalModel::new(2, 8).unwrap();
     model.feed("\x1b[1;1HA│\x1b[1;5Hחזוה\x1b[2;1HB│\x1b[2;5Hדגבא".as_bytes());

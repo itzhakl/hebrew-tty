@@ -70,6 +70,51 @@ fn visual_order_cup_columns_remain_physical_while_typing_rtl() {
 }
 
 #[test]
+fn visual_paragraph_continuation_preserves_physical_cursor() {
+    let mut model = TerminalModel::new(3, 20).unwrap();
+    model.feed("\x1b[1;1Hםולש\x1b[2;1Henglish\x1b[2;8H".as_bytes());
+    let snapshot = model.snapshot();
+    let mut renderer = Renderer::new(Vec::new());
+    let result = renderer
+        .repaint(&snapshot, &verified_path(Order::Visual), Mode::Auto)
+        .unwrap();
+
+    assert_eq!(result.cursor.row, 1);
+    assert_eq!(result.cursor.col, 7);
+}
+
+#[test]
+fn first_relative_repaint_paints_dependent_composed_rows() {
+    let path = verified_path(Order::Logical);
+    let mut model = TerminalModel::new(3, 20).unwrap();
+    model.feed("\x1b[1;1Hשלום\x1b[2;1Henglish".as_bytes());
+    let mut renderer = Renderer::new(Vec::new());
+    let changed = renderer
+        .repaint_dirty(&model.snapshot(), &path, Mode::Auto, &[0])
+        .unwrap();
+
+    assert_eq!(changed.rows, [0, 1]);
+}
+
+#[test]
+fn anchor_layout_changes_repaint_its_continuations() {
+    let path = verified_path(Order::Logical);
+    let mut model = TerminalModel::new(3, 20).unwrap();
+    model.feed("\x1b[1;1Hשלום\x1b[2;1Henglish".as_bytes());
+    let mut renderer = Renderer::new(Vec::new());
+    renderer
+        .repaint(&model.snapshot(), &path, Mode::Auto)
+        .unwrap();
+
+    model.feed(b"\x1b[1;1H\x1b[2Kanchor");
+    let changed = renderer
+        .repaint(&model.snapshot(), &path, Mode::Auto)
+        .unwrap();
+
+    assert_eq!(changed.rows, [0, 1]);
+}
+
+#[test]
 fn visual_recovery_maps_the_reported_logical_column() {
     let mut model = TerminalModel::new(2, 10).unwrap();
     model.feed("דגבא".as_bytes());
@@ -152,18 +197,18 @@ fn renderer_repaints_only_changed_rows_and_restores_mapped_caret() {
         .unwrap();
     assert!(unchanged.rows.is_empty());
 
-    model.feed(b"\x1b[2;1Hlatin");
+    model.feed(b"\x1b[3;1Hlatin");
     let changed = renderer
         .repaint(&model.snapshot(), &path, Mode::Auto)
         .unwrap();
-    assert_eq!(changed.rows, [1]);
-    assert_eq!(changed.cursor.row, 1);
+    assert_eq!(changed.rows, [2]);
+    assert_eq!(changed.cursor.row, 2);
     assert_eq!(changed.cursor.col, 5);
 
     let output = String::from_utf8(renderer.into_inner()).unwrap();
     assert!(output.contains("\x1b[1;1H"));
-    assert!(output.contains("\x1b[2;1H"));
-    assert!(output.ends_with("\x1b[2;6H\x1b[?25h"));
+    assert!(output.contains("\x1b[3;1H"));
+    assert!(output.ends_with("\x1b[3;6H\x1b[?25h"));
 }
 
 fn verified_path(order: Order) -> ExecutionPath {

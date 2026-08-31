@@ -7,10 +7,33 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::classify::{select_mode, ExecutionPath, RowDisposition};
 use crate::config::Mode;
-use crate::terminal::{CellSnapshot, CellWidth, PaneSpan, PhysicalRowSnapshot};
+use crate::terminal::{CellSnapshot, CellWidth, Color, PaneSpan, PhysicalRowSnapshot};
 
 const MAX_GRAPHEMES: usize = 2_000;
 const PROMPTS: &[&str] = &["❯", ">", "»", "❱", "›"];
+
+#[derive(Clone, Copy)]
+struct ParagraphPolicy {
+    base: Level,
+    align_right: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RowKind {
+    Prose,
+    Boundary,
+}
+
+struct GroupLayout {
+    results: Vec<LayoutResult>,
+    policy: Option<ParagraphPolicy>,
+}
+
+struct LogicalRowLayout {
+    result: LayoutResult,
+    base_rtl: bool,
+    resolved: bool,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CoordinateMap {
@@ -86,17 +109,25 @@ pub fn layout_rows(
     }
 
     let mut output = Vec::with_capacity(rows.len());
+    let mut active_paragraph = None;
     let mut start = 0;
     while start < rows.len() {
         let mut end = start;
         while end + 1 < rows.len() && rows[end].soft_wrapped {
             end += 1;
         }
-        output.extend(layout_group(
-            &rows[start..=end],
-            pane,
-            selection.disposition,
-        ));
+        let group = &rows[start..=end];
+        let kind = classify_group(group, pane);
+        let inherited = (kind == RowKind::Prose)
+            .then_some(active_paragraph)
+            .flatten();
+        let layout = layout_group(group, pane, selection.disposition, inherited);
+        if kind == RowKind::Boundary {
+            active_paragraph = None;
+        } else if inherited.is_none() {
+            active_paragraph = layout.policy;
+        }
+        output.extend(layout.results);
         start = end + 1;
     }
     output
@@ -106,43 +137,214 @@ fn layout_group(
     rows: &[PhysicalRowSnapshot],
     pane: PaneSpan,
     disposition: RowDisposition,
-) -> Vec<LayoutResult> {
+    inherited: Option<ParagraphPolicy>,
+) -> GroupLayout {
+    let fallback = || GroupLayout {
+        results: rows.iter().map(unchanged).collect(),
+        policy: None,
+    };
     let width = usize::from(pane.end_col - pane.start_col);
     let painted = rows
         .iter()
         .flat_map(|row| tokens_in(row, pane, row.soft_wrapped))
         .collect::<Vec<_>>();
-    if painted.is_empty() || painted.len() > MAX_GRAPHEMES || !contains_rtl(&painted) {
-        return rows.iter().map(unchanged).collect();
+    if painted.is_empty() || painted.len() > MAX_GRAPHEMES {
+        return fallback();
+    }
+    if !contains_rtl(&painted) && inherited.is_none() {
+        return GroupLayout {
+            results: rows.iter().map(unchanged).collect(),
+            policy: Some(ParagraphPolicy {
+                base: Level::ltr(),
+                align_right: false,
+            }),
+        };
     }
 
-    let logical = match disposition {
-        RowDisposition::TransformLogical => painted,
-        RowDisposition::RecoverVisual => match recover_visual(painted) {
-            Some(tokens) => tokens,
-            None => return rows.iter().map(unchanged).collect(),
-        },
-        RowDisposition::PassThrough => return rows.iter().map(unchanged).collect(),
+    let logical = if !contains_rtl(&painted) {
+        painted
+    } else {
+        match disposition {
+            RowDisposition::TransformLogical => painted,
+            RowDisposition::RecoverVisual => {
+                match recover_visual(painted, inherited.map(|policy| policy.base)) {
+                    Some(tokens) => tokens,
+                    None => return fallback(),
+                }
+            }
+            RowDisposition::PassThrough => return fallback(),
+        }
     };
     let mut logical = logical;
     assign_logical_columns(&mut logical);
     let logical_text = text_of(&logical);
     let Some(wrapped) = wrap_tokens(logical, width) else {
-        return rows.iter().map(unchanged).collect();
+        return fallback();
     };
     if wrapped.len() > rows.len() {
-        return rows.iter().map(unchanged).collect();
+        return fallback();
     }
 
-    let mut results = wrapped
-        .into_iter()
-        .enumerate()
-        .map(|(index, tokens)| layout_logical_row(tokens, pane, &rows[index], &logical_text))
-        .collect::<Vec<_>>();
+    let mut wrapped = wrapped.into_iter();
+    let Some(first_tokens) = wrapped.next() else {
+        return fallback();
+    };
+    let first = layout_logical_row(first_tokens, pane, &rows[0], &logical_text, inherited);
+    if !first.resolved {
+        return fallback();
+    }
+    let policy = inherited.or_else(|| {
+        Some(ParagraphPolicy {
+            base: if first.base_rtl {
+                Level::rtl()
+            } else {
+                Level::ltr()
+            },
+            align_right: first.base_rtl,
+        })
+    });
+    let mut results = vec![first.result];
+    for (index, tokens) in wrapped.enumerate() {
+        let row = layout_logical_row(tokens, pane, &rows[index + 1], &logical_text, policy);
+        if !row.resolved {
+            return fallback();
+        }
+        results.push(row.result);
+    }
     while results.len() < rows.len() {
         results.push(blank_result(&rows[results.len()], pane));
     }
-    results
+    GroupLayout { results, policy }
+}
+
+fn classify_group(rows: &[PhysicalRowSnapshot], pane: PaneSpan) -> RowKind {
+    let first_text = pane_text(&rows[0], pane);
+    let all_blank = rows
+        .iter()
+        .all(|row| pane_text(row, pane).trim().is_empty());
+    if all_blank {
+        return RowKind::Boundary;
+    }
+
+    let first_trimmed = first_text.trim_start();
+    if is_indented_code(&first_text)
+        || is_list_item(first_trimmed)
+        || row_is_lexical_boundary(&rows[0], pane)
+        || rows.iter().any(|row| row_is_intrinsic_boundary(row, pane))
+    {
+        RowKind::Boundary
+    } else {
+        RowKind::Prose
+    }
+}
+
+fn row_is_lexical_boundary(row: &PhysicalRowSnapshot, pane: PaneSpan) -> bool {
+    let text = pane_text(row, pane);
+    let trimmed = text.trim();
+    trimmed.is_empty()
+        || trimmed.starts_with("```")
+        || trimmed.starts_with("~~~")
+        || is_standalone_url(trimmed)
+        || is_prompt_row(trimmed)
+        || is_table_or_layout_row(trimmed)
+        || is_separator(trimmed)
+}
+
+fn row_is_intrinsic_boundary(row: &PhysicalRowSnapshot, pane: PaneSpan) -> bool {
+    same_hyperlink_content(row, pane) || row_wide_style(row, pane)
+}
+
+fn is_indented_code(text: &str) -> bool {
+    text.starts_with('\t')
+        || (text.starts_with("    ") && !text.as_bytes().get(4).is_some_and(|byte| *byte == b' '))
+        || (text.starts_with("        ")
+            && !text.as_bytes().get(8).is_some_and(|byte| *byte == b' '))
+}
+
+fn pane_text(row: &PhysicalRowSnapshot, pane: PaneSpan) -> String {
+    text_of(&tokens_in(row, pane, false))
+}
+
+fn is_list_item(text: &str) -> bool {
+    let mut chars = text.chars();
+    if matches!(chars.next(), Some('-' | '*' | '+' | '•' | '◦' | '▪')) {
+        return chars.next().is_some_and(char::is_whitespace);
+    }
+    let mut digits = 0;
+    for ch in text.chars() {
+        if ch.is_ascii_digit() {
+            digits += 1;
+        } else {
+            break;
+        }
+    }
+    if digits == 0 {
+        return false;
+    }
+    let suffix = &text[digits..];
+    let mut chars = suffix.chars();
+    matches!(chars.next(), Some('.' | ')')) && chars.next().is_some_and(char::is_whitespace)
+}
+
+fn is_standalone_url(text: &str) -> bool {
+    (text.starts_with("http://") || text.starts_with("https://"))
+        && !text.chars().any(char::is_whitespace)
+}
+
+fn is_prompt_row(text: &str) -> bool {
+    PROMPTS.iter().any(|prompt| {
+        text.strip_prefix(prompt).is_some_and(|rest| {
+            rest.is_empty() || rest.chars().next().is_some_and(char::is_whitespace)
+        })
+    })
+}
+
+fn is_table_or_layout_row(text: &str) -> bool {
+    text.chars().any(is_layout) || text.matches('|').count() >= 2
+}
+
+fn is_separator(text: &str) -> bool {
+    let visible = text.chars().filter(|ch| !ch.is_whitespace()).count();
+    visible >= 3
+        && text
+            .chars()
+            .all(|ch| ch.is_whitespace() || matches!(ch, '-' | '=' | '_' | '*' | '~' | ':' | '|'))
+}
+
+fn same_hyperlink_content(row: &PhysicalRowSnapshot, pane: PaneSpan) -> bool {
+    let start = usize::from(pane.start_col);
+    let end = usize::from(pane.end_col).min(row.cells.len());
+    let mut uri = None;
+    let mut content = false;
+    for cell in &row.cells[start..end] {
+        if cell.width == CellWidth::Continuation || cell.text.trim().is_empty() {
+            continue;
+        }
+        content = true;
+        let Some(cell_uri) = cell.hyperlink.as_deref() else {
+            return false;
+        };
+        if uri.is_some_and(|known| known != cell_uri) {
+            return false;
+        }
+        uri = Some(cell_uri);
+    }
+    content && uri.is_some()
+}
+
+fn row_wide_style(row: &PhysicalRowSnapshot, pane: PaneSpan) -> bool {
+    let start = usize::from(pane.start_col);
+    let end = usize::from(pane.end_col).min(row.cells.len());
+    let Some(first) = row.cells[start..end]
+        .iter()
+        .position(|cell| !cell.text.trim().is_empty())
+    else {
+        return false;
+    };
+    let cells = &row.cells[start + first..end];
+    let background = cells[0].style.background;
+    (background != Color::Default && cells.iter().all(|cell| cell.style.background == background))
+        || cells.iter().all(|cell| cell.style.inverse)
 }
 
 fn layout_logical_row(
@@ -150,11 +352,13 @@ fn layout_logical_row(
     pane: PaneSpan,
     template: &PhysicalRowSnapshot,
     logical_text: &str,
-) -> LayoutResult {
+    inherited: Option<ParagraphPolicy>,
+) -> LogicalRowLayout {
     let segments = split_layout_segments(tokens);
     let has_layout = segments.len() > 1;
     let mut visual = Vec::new();
     let mut base_rtl = false;
+    let mut resolved = true;
     for (segment, separator) in segments {
         if segment.is_empty() {
             if let Some(separator) = separator {
@@ -165,10 +369,14 @@ fn layout_logical_row(
         let prefix = prompt_prefix_len(&segment);
         visual.extend_from_slice(&segment[..prefix]);
         let content = segment[prefix..].to_vec();
-        if let Some(resolution) = resolve(content) {
+        let base = inherited
+            .map(|policy| policy.base)
+            .or_else(|| preferred_base(&content));
+        if let Some(resolution) = resolve_with_base(content, base) {
             base_rtl |= resolution.base_rtl;
             visual.extend(visual_tokens(&resolution, true));
         } else {
+            resolved = false;
             visual.extend_from_slice(&segment[prefix..]);
         }
         if let Some(separator) = separator {
@@ -178,27 +386,41 @@ fn layout_logical_row(
 
     let used = display_width(&visual);
     let pane_width = usize::from(pane.end_col - pane.start_col);
-    let right_aligned = !has_layout && base_rtl && used < pane_width;
-    let offset = if right_aligned { pane_width - used } else { 0 };
+    let right_aligned = if has_layout {
+        false
+    } else if let Some(policy) = inherited {
+        policy.align_right
+    } else {
+        base_rtl && used < pane_width
+    };
+    let offset = if right_aligned && used < pane_width {
+        pane_width - used
+    } else {
+        0
+    };
     let coordinates = coordinate_map(&visual, pane, offset);
     let cells = paint_into(template, pane, &visual, offset);
-    LayoutResult {
-        transformed: cells != template.cells,
-        cells,
-        right_aligned,
-        logical_text: Some(logical_text.to_owned()),
-        coordinates,
+    LogicalRowLayout {
+        base_rtl,
+        resolved,
+        result: LayoutResult {
+            transformed: cells != template.cells,
+            cells,
+            right_aligned,
+            logical_text: Some(logical_text.to_owned()),
+            coordinates,
+        },
     }
 }
 
-fn recover_visual(painted: Vec<Token>) -> Option<Vec<Token>> {
+fn recover_visual(painted: Vec<Token>, inherited_base: Option<Level>) -> Option<Vec<Token>> {
     let mut logical = Vec::with_capacity(painted.len());
     for (segment, separator) in split_layout_segments(painted) {
         let prefix = prompt_prefix_len(&segment);
         logical.extend_from_slice(&segment[..prefix]);
         let content = &segment[prefix..];
         if contains_rtl(content) {
-            logical.extend(recover(content)?);
+            logical.extend(recover(content, inherited_base)?);
         } else {
             logical.extend_from_slice(content);
         }
@@ -209,7 +431,7 @@ fn recover_visual(painted: Vec<Token>) -> Option<Vec<Token>> {
     Some(logical)
 }
 
-fn recover(painted: &[Token]) -> Option<Vec<Token>> {
+fn recover(painted: &[Token], inherited_base: Option<Level>) -> Option<Vec<Token>> {
     let mut guesses = vec![painted.to_vec()];
     let mut reversed = painted.to_vec();
     reversed.reverse();
@@ -218,7 +440,7 @@ fn recover(painted: &[Token]) -> Option<Vec<Token>> {
 
     for mut candidate in guesses {
         for _ in 0..6 {
-            let resolutions = resolutions_for_recovery(candidate.clone())?;
+            let resolutions = resolutions_for_recovery(candidate.clone(), inherited_base)?;
             if resolutions
                 .iter()
                 .any(|resolution| same_text(&visual_tokens(resolution, false), painted))
@@ -244,11 +466,20 @@ fn recover(painted: &[Token]) -> Option<Vec<Token>> {
     }
 
     let first = found.first()?.clone();
-    let first_visual = visual_tokens(&resolve(first.clone())?, true);
+    let first_visual = visual_tokens(
+        &resolve_with_base(
+            first.clone(),
+            inherited_base.or_else(|| preferred_base(&first)),
+        )?,
+        true,
+    );
     if found.iter().skip(1).any(|candidate| {
-        resolve(candidate.clone())
-            .map(|resolution| visual_tokens(&resolution, true))
-            .is_none_or(|visual| visual != first_visual)
+        resolve_with_base(
+            candidate.clone(),
+            inherited_base.or_else(|| preferred_base(candidate)),
+        )
+        .map(|resolution| visual_tokens(&resolution, true))
+        .is_none_or(|visual| visual != first_visual)
     }) {
         None
     } else {
@@ -256,16 +487,14 @@ fn recover(painted: &[Token]) -> Option<Vec<Token>> {
     }
 }
 
-fn resolve(tokens: Vec<Token>) -> Option<Resolution> {
-    let base = preferred_base(&tokens);
-    resolve_with_base(tokens, base)
-}
-
-fn resolutions_for_recovery(tokens: Vec<Token>) -> Option<Vec<Resolution>> {
-    let preferred = preferred_base(&tokens);
+fn resolutions_for_recovery(
+    tokens: Vec<Token>,
+    inherited_base: Option<Level>,
+) -> Option<Vec<Resolution>> {
+    let preferred = inherited_base.or_else(|| preferred_base(&tokens));
     let first = resolve_with_base(tokens.clone(), preferred)?;
     let mut resolutions = vec![first];
-    if preferred.is_some() {
+    if preferred.is_some() && inherited_base.is_none() {
         resolutions.push(resolve_with_base(tokens, None)?);
     }
     Some(resolutions)
