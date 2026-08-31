@@ -1,5 +1,12 @@
 # hebrew-tty
 
+A recorded agent version is a floor, not a lock. Pinning it to the exact
+string meant every upgrade silently turned the whole filter off - `Auto` saw an
+unverified path and passed every row through, which reads as "Hebrew stopped
+working" and names no cause. The recorded order carries forward to later
+versions, and the observed order and wrapping still override it the moment a
+real row contradicts the recording.
+
 Puts Hebrew back the way it was typed in terminal coding agents. The Linux
 Rust proxy owns the child PTY, VT screen model, verified execution-path
 classification, per-row Unicode BiDi layout, pane alignment, repainting, and

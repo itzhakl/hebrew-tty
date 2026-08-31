@@ -52,19 +52,31 @@ pub struct ExecutionPath {
 }
 
 impl ExecutionPath {
-    fn verified(order: Order, fixture_prefix: &str, agent_version: &str) -> Self {
+    fn verified(
+        order: Order,
+        fixture_prefix: &str,
+        recorded_version: &str,
+        observed_version: &str,
+    ) -> Self {
+        let mut evidence = vec![
+            format!(
+                "verified measurement pair: {fixture_prefix}-48.json, {fixture_prefix}-80.json"
+            ),
+            format!("recorded agent version: {recorded_version}"),
+            format!("recorded order: {order:?}"),
+            "48-column recording verifies post_bidi wrapping".to_owned(),
+        ];
+        if observed_version != recorded_version {
+            evidence.push(format!(
+                "observed agent version {observed_version} is newer than the recording; \
+                 the recorded order carries forward until a row contradicts it"
+            ));
+        }
         Self {
             order: Some(order),
             wrapping: Some(Wrapping::PostBidi),
             confidence: Confidence::Verified,
-            evidence: vec![
-                format!(
-                    "verified measurement pair: {fixture_prefix}-48.json, {fixture_prefix}-80.json"
-                ),
-                format!("recorded agent version: {agent_version}"),
-                format!("recorded order: {order:?}"),
-                "48-column recording verifies post_bidi wrapping".to_owned(),
-            ],
+            evidence,
         }
     }
 
@@ -112,15 +124,11 @@ impl Classifier {
         let Some(agent_version) = observed.agent_version.as_deref() else {
             return ExecutionPath::unknown("agent version evidence is missing");
         };
-        if agent_version != expected_version {
-            return ExecutionPath::unknown(format!(
-                "agent version {agent_version} does not match recorded version {expected_version}"
-            ));
-        }
         let expected = ExecutionPath::verified(
             expected_order,
             &format!("{command}-{host_name}"),
             expected_version,
+            agent_version,
         );
 
         if observed
