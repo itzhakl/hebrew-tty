@@ -52,6 +52,48 @@ fn recorded_agent_and_host_paths_are_verified() {
 }
 
 #[test]
+fn an_agent_version_past_the_recording_keeps_the_recorded_order() {
+    let path = Classifier.observe(
+        OsStr::new("claude"),
+        Some(Host::Direct),
+        ObservedEvidence {
+            agent_version: Some("2.1.252 (Claude Code)".to_owned()),
+            ..ObservedEvidence::default()
+        },
+    );
+
+    assert_eq!(path.confidence, Confidence::Verified);
+    assert_eq!(path.order, Some(Order::Visual));
+    assert_eq!(
+        select_mode(Mode::Auto, &path).disposition,
+        RowDisposition::RecoverVisual
+    );
+    assert!(path
+        .evidence
+        .iter()
+        .any(|item| item.contains("2.1.252 (Claude Code)")));
+}
+
+#[test]
+fn a_contradicting_row_still_overrides_an_unrecorded_version() {
+    let path = Classifier.observe(
+        OsStr::new("claude"),
+        Some(Host::Direct),
+        ObservedEvidence {
+            agent_version: Some("2.1.252 (Claude Code)".to_owned()),
+            order: Some(Order::Logical),
+            ..ObservedEvidence::default()
+        },
+    );
+
+    assert_eq!(path.confidence, Confidence::Unknown);
+    assert_eq!(
+        select_mode(Mode::Auto, &path).disposition,
+        RowDisposition::PassThrough
+    );
+}
+
+#[test]
 fn incomplete_contradictory_and_unknown_paths_are_safe() {
     let classifier = Classifier;
     let cases = [
@@ -65,14 +107,6 @@ fn incomplete_contradictory_and_unknown_paths_are_safe() {
             OsStr::new("claude"),
             Some(Host::Direct),
             ObservedEvidence::default(),
-        ),
-        classifier.observe(
-            OsStr::new("claude"),
-            Some(Host::Direct),
-            ObservedEvidence {
-                agent_version: Some("2.1.252 (Claude Code)".to_owned()),
-                ..ObservedEvidence::default()
-            },
         ),
         classifier.observe(
             OsStr::new("claude"),

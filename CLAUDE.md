@@ -1,5 +1,19 @@
 # hebrew-tty
 
+Herdr reads the pane's own foreground process, and that process is the proxy,
+never the agent. The agent runs on the inner PTY the proxy opened, which Herdr
+cannot see at all - so a pane launched through the proxy detected as no agent
+and lost every Herdr feature keyed to one. `--as` names the proxy itself with
+`PR_SET_NAME`, not just the child. The name is cut to 15 characters, which is
+all `comm` holds.
+
+A recorded agent version is a floor, not a lock. Pinning it to the exact
+string meant every upgrade silently turned the whole filter off - `Auto` saw an
+unverified path and passed every row through, which reads as "Hebrew stopped
+working" and names no cause. The recorded order carries forward to later
+versions, and the observed order and wrapping still override it the moment a
+real row contradicts the recording.
+
 Puts Hebrew back the way it was typed in terminal coding agents. The Linux
 Rust proxy owns the child PTY, VT screen model, verified execution-path
 classification, per-row Unicode BiDi layout, pane alignment, repainting, and
