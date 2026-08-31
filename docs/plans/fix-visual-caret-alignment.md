@@ -1,6 +1,6 @@
 # fix/visual-caret-alignment
 
-**Status:** open, evidence recorded 2026-09-01
+**Status:** fix landed 2026-09-01, live verification (step 4) outstanding
 
 ## Goal
 
@@ -64,43 +64,55 @@ if disposition != RowDisposition::TransformLogical {
 `RecoverVisual` returns the caret untouched, always. That was deliberate in #33
 for Pi, which emits visual-order coordinates that must not be remapped.
 
-## Why the obvious fix fails
+## Why the obvious fix looked wrong, and was not
 
-Offsetting the caret by the row's alignment shift - the difference between the
-first glyph column before and after layout - fixes Claude and breaks Pi. Two
-tests encode the Pi behaviour and both fail under it:
+Offsetting the caret by the row's alignment shift fails two tests that were
+read as Pi's recorded behaviour:
 
 - `caret_mapping::visual_order_cup_columns_remain_physical_while_typing_rtl`
 - `caret_mapping::visual_paragraph_continuation_preserves_physical_cursor`
 
-Their fixtures hold Hebrew already sitting near the right edge, columns 60-63 of
-65: Pi aligns its own output, Claude does not. Flushing an already-aligned row
-still moves it a column or two, and a blunt shift follows that move and
-overshoots.
+Measured, both rows move by exactly the shift the caret was denied. In the
+first, the glyph run goes from columns 59-62 to 61-64 while the caret stayed at
+62; in the second the continuation row goes from 0-6 to 13-19 while the caret
+stayed at 7. So those two constants were recording this bug at those widths, not
+Pi. What Pi's own measurement recorded (`fix-pi-visual-caret.md`, step 3) is the
+caret sitting beside the newest grapheme, taken at a width where the row was
+already flush and the shift was zero - which the shift preserves, because a row
+we did not move carries a zero offset.
 
-So the rule is neither "always keep the physical column" nor "always shift". It
-has to separate *the row moved because we aligned it* from *the row was already
-where it belongs*.
+Claude and Pi turn out to place the caret identically: on the column of the
+newest grapheme. `live-passthrough.txt` shows it - the run is painted from
+column 3 and the caret walks 3, 4 ... 11 with it. The only difference is that
+Pi paints its rows already flushed right and Claude paints them at the left, so
+only Claude's rows get a non-zero shift from us.
 
 ## Constraints
 
-- C1: Do not regress the two Pi tests above. They are the recorded behaviour of
-  a second agent, not an implementation detail.
+- C1: Do not regress the two Pi tests above. RESOLVED - see above; their
+  constants moved by the same amount as their rows, and Pi's live measurement
+  is untouched because its offset is zero.
 - C2: The caret is never moved on a guess - the existing invariant in
-  `CLAUDE.md`. A shift that cannot be justified from the row leaves the original
-  column standing.
+  `CLAUDE.md`. Honoured: the offset is non-zero only on a row whose recovery
+  resolved and which we actually re-painted; a fallback row carries zero and
+  leaves the column standing.
 - C3: New behaviour needs a fixture-backed check, not a hand-written string.
-  `test/fixtures/*.json` is recorded with `tools/probe*.py`.
+  `test/fixtures/*.json` are recorded by `tools/probe*.py`.
 
 ## Steps
 
-- [ ] 1. Turn `live-passthrough.txt` and `live-auto.txt` into recorded fixtures
-      through `tools/probe*.py`, at two widths as the existing pairs do. [C3]
-- [ ] 2. Find the discriminator between an alignment the proxy performed and one
-      the agent had already applied. The layout result knows what it did; the
-      caret path currently does not ask. [G1, C1, C2]
-- [ ] 3. Apply the shift only in the first case, and add regressions covering
-      both agents. [G1, C1, C3]
+- [x] 1. Evidence recorded from a live Claude Code 2.1.252 on an isolated pty:
+      `docs/plans/visual-caret-evidence/`. The new regression replays that
+      recorded byte stream rather than a hand-written string. [C3]
+- [x] 2. Discriminator found: the alignment the proxy performed is the `offset`
+      `layout_logical_row` already computes. It is now carried out on
+      `LayoutResult::align_offset`, so the caret path can ask what the layout
+      did. An alignment the agent applied itself leaves nothing for us to add
+      and the offset is zero. [G1, C1, C2]
+- [x] 3. `mapped_cursor` shifts a `RecoverVisual` caret by that offset, clamped
+      to the pane. Regressions: the two Pi tests at their measured columns, and
+      `recovered_visual_rows_that_were_flushed_right_carry_their_caret` for
+      Claude. [G1, C1, C3]
 - [ ] 4. Verify on a live Claude in an isolated workspace, the way
       `fix-rtl-paragraph-layout.md` did at its step 5. [G1]
 

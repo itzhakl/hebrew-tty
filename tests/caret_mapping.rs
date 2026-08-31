@@ -66,7 +66,32 @@ fn visual_order_cup_columns_remain_physical_while_typing_rtl() {
         .repaint(&second_snapshot, &path, Mode::Auto)
         .unwrap();
 
-    assert_eq!((first.cursor.col, second.cursor.col), (62, 61));
+    assert_eq!((first.cursor.col, second.cursor.col), (64, 63));
+}
+
+#[test]
+fn recovered_visual_rows_that_were_flushed_right_carry_their_caret() {
+    let mut model = TerminalModel::new(30, 100).unwrap();
+    model.feed("\x1b[H\r\x1b[3C\x1b[24Bםלוע םולש\x1b[25;12H".as_bytes());
+    let snapshot = model.snapshot();
+    assert_eq!(snapshot.cursor.col, 11);
+
+    let path = verified_path(Order::Visual);
+    let result = layout_row(&snapshot.physical_rows[24], pane(100), &path, Mode::Auto);
+    let first_glyph = result
+        .cells
+        .iter()
+        .position(|cell| !cell.text.trim().is_empty())
+        .unwrap();
+    assert_eq!(first_glyph, 3 + usize::from(result.align_offset));
+
+    let mut renderer = Renderer::new(Vec::new());
+    let repainted = renderer.repaint(&snapshot, &path, Mode::Auto).unwrap();
+    assert_eq!(
+        repainted.cursor.col,
+        11 + result.align_offset,
+        "caret must follow the row it was aligned with"
+    );
 }
 
 #[test]
@@ -80,7 +105,7 @@ fn visual_paragraph_continuation_preserves_physical_cursor() {
         .unwrap();
 
     assert_eq!(result.cursor.row, 1);
-    assert_eq!(result.cursor.col, 7);
+    assert_eq!(result.cursor.col, 19);
 }
 
 #[test]

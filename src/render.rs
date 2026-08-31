@@ -43,7 +43,11 @@ impl<W: Write> Renderer<W> {
         mode: Mode,
         invalidated_rows: &[u16],
     ) -> io::Result<RepaintSummary> {
-        let (rows, maps) = compose_layout(screen, path, mode);
+        let ComposedLayout {
+            rows,
+            maps,
+            offsets,
+        } = compose_layout(screen, path, mode);
         let relative_first_repaint = self.previous.is_none() && !invalidated_rows.is_empty();
         let dirty = rows
             .iter()
@@ -62,7 +66,7 @@ impl<W: Write> Renderer<W> {
             })
             .collect::<Vec<_>>();
         let disposition = select_mode(mode, path).disposition;
-        let cursor = mapped_cursor(screen, &maps, disposition);
+        let cursor = mapped_cursor(screen, &maps, &offsets, disposition);
 
         let mut relative_row = screen.cursor.row;
         if !dirty.is_empty() {
@@ -131,21 +135,29 @@ fn move_to_relative_row(writer: &mut impl Write, from: u16, to: u16) -> io::Resu
     }
 }
 
-fn compose_layout(
-    screen: &ScreenSnapshot,
-    path: &ExecutionPath,
-    mode: Mode,
-) -> (Vec<PhysicalRowSnapshot>, Vec<Vec<Option<CoordinateMap>>>) {
+struct ComposedLayout {
+    rows: Vec<PhysicalRowSnapshot>,
+    maps: Vec<Vec<Option<CoordinateMap>>>,
+    offsets: Vec<Vec<u16>>,
+}
+
+fn compose_layout(screen: &ScreenSnapshot, path: &ExecutionPath, mode: Mode) -> ComposedLayout {
     let mut rows = screen.physical_rows.clone();
     let mut maps = vec![vec![None; screen.pane_spans.len()]; rows.len()];
+    let mut offsets = vec![vec![0; screen.pane_spans.len()]; rows.len()];
     for (pane_index, &pane) in screen.pane_spans.iter().enumerate() {
         let results = layout_rows(&screen.physical_rows, pane, path, mode);
         for (row_index, result) in results.into_iter().enumerate() {
             replace_pane(&mut rows[row_index], &result, pane);
+            offsets[row_index][pane_index] = result.align_offset;
             maps[row_index][pane_index] = result.coordinates;
         }
     }
-    (rows, maps)
+    ComposedLayout {
+        rows,
+        maps,
+        offsets,
+    }
 }
 
 fn replace_pane(row: &mut PhysicalRowSnapshot, result: &LayoutResult, pane: PaneSpan) {
@@ -157,10 +169,11 @@ fn replace_pane(row: &mut PhysicalRowSnapshot, result: &LayoutResult, pane: Pane
 fn mapped_cursor(
     screen: &ScreenSnapshot,
     maps: &[Vec<Option<CoordinateMap>>],
+    offsets: &[Vec<u16>],
     disposition: RowDisposition,
 ) -> CursorSnapshot {
     let original = screen.cursor;
-    if disposition != RowDisposition::TransformLogical {
+    if disposition == RowDisposition::PassThrough {
         return original;
     }
     let Some((pane_index, pane)) = screen
@@ -184,6 +197,9 @@ fn mapped_cursor(
     {
         group_end += 1;
     }
+    if disposition == RowDisposition::RecoverVisual {
+        return shifted_cursor(original, offsets[row][pane_index], *pane);
+    }
     let pane_width = usize::from(pane.end_col - pane.start_col);
     let logical_col =
         (row - group_start) * pane_width + usize::from(original.col.saturating_sub(pane.start_col));
@@ -205,6 +221,16 @@ fn mapped_cursor(
         }
     }
     original
+}
+
+fn shifted_cursor(original: CursorSnapshot, offset: u16, pane: PaneSpan) -> CursorSnapshot {
+    if offset == 0 {
+        return original;
+    }
+    CursorSnapshot {
+        col: original.col.saturating_add(offset).min(pane.end_col - 1),
+        ..original
+    }
 }
 
 fn write_row(writer: &mut impl Write, row: &PhysicalRowSnapshot) -> io::Result<()> {

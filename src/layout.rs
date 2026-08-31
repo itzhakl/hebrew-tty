@@ -63,6 +63,7 @@ pub struct LayoutResult {
     pub cells: Vec<CellSnapshot>,
     pub transformed: bool,
     pub right_aligned: bool,
+    pub align_offset: u16,
     pub logical_text: Option<String>,
     pub coordinates: Option<CoordinateMap>,
 }
@@ -407,6 +408,7 @@ fn layout_logical_row(
             transformed: cells != template.cells,
             cells,
             right_aligned,
+            align_offset: u16::try_from(offset).unwrap_or(0),
             logical_text: Some(logical_text.to_owned()),
             coordinates,
         },
@@ -778,6 +780,7 @@ fn unchanged(row: &PhysicalRowSnapshot) -> LayoutResult {
         cells: row.cells.clone(),
         transformed: false,
         right_aligned: false,
+        align_offset: 0,
         logical_text: None,
         coordinates: None,
     }
