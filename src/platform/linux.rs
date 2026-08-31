@@ -63,7 +63,7 @@ fn pty_size(size: WindowSize) -> PtySize {
 }
 
 fn command_builder(command: Command) -> CommandBuilder {
-    if let Some(argv0) = command.argv0 {
+    let mut builder = if let Some(argv0) = command.argv0 {
         let mut builder = CommandBuilder::new("env");
         let mut option = OsString::from("--argv0=");
         option.push(argv0);
@@ -75,7 +75,11 @@ fn command_builder(command: Command) -> CommandBuilder {
         let mut builder = CommandBuilder::new(command.program);
         builder.args(command.args);
         builder
+    };
+    if let Ok(dir) = std::env::current_dir() {
+        builder.cwd(dir);
     }
+    builder
 }
 
 fn child_exit_code(status: WaitStatus) -> Option<i32> {
