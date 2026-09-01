@@ -14,7 +14,9 @@ use hebrew_tty::classify::{select_mode, ExecutionPath, RowDisposition};
 use hebrew_tty::config::Mode;
 use hebrew_tty::layout::is_rtl_char;
 use hebrew_tty::render::Renderer;
+use hebrew_tty::stream::StreamBoundary;
 use hebrew_tty::terminal::TerminalModel;
+use hebrew_tty::trace::TraceWriter;
 use nix::sys::signal::{killpg, Signal};
 use nix::unistd::Pid;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
@@ -127,97 +129,11 @@ fn read_output(mut reader: Box<dyn io::Read + Send>, sender: mpsc::SyncSender<Ou
     }
 }
 
-#[derive(Clone, Copy, Default)]
-enum EscapeState {
-    #[default]
-    Ground,
-    Escape,
-    Csi,
-    String,
-    StringEscape,
-}
-
-#[derive(Default)]
-struct StreamBoundary {
-    escape: EscapeState,
-    utf8_continuations: u8,
-}
-
-impl StreamBoundary {
-    fn feed(&mut self, bytes: &[u8]) {
-        for &byte in bytes {
-            if self.utf8_continuations > 0 {
-                if byte & 0b1100_0000 == 0b1000_0000 {
-                    self.utf8_continuations -= 1;
-                    continue;
-                }
-                self.utf8_continuations = 0;
-            }
-            if matches!(byte, 0x18 | 0x1a) {
-                self.escape = EscapeState::Ground;
-                continue;
-            }
-            if byte == 0x1b && !matches!(self.escape, EscapeState::String) {
-                self.escape = EscapeState::Escape;
-                continue;
-            }
-            self.escape = match self.escape {
-                EscapeState::Ground => match byte {
-                    0x90 | 0x9d..=0x9f => EscapeState::String,
-                    0x9b => EscapeState::Csi,
-                    0xc2..=0xdf => {
-                        self.utf8_continuations = 1;
-                        EscapeState::Ground
-                    }
-                    0xe0..=0xef => {
-                        self.utf8_continuations = 2;
-                        EscapeState::Ground
-                    }
-                    0xf0..=0xf4 => {
-                        self.utf8_continuations = 3;
-                        EscapeState::Ground
-                    }
-                    _ => EscapeState::Ground,
-                },
-                EscapeState::Escape => match byte {
-                    b'[' => EscapeState::Csi,
-                    b']' | b'P' | b'_' | b'^' => EscapeState::String,
-                    0x20..=0x2f => EscapeState::Escape,
-                    _ => EscapeState::Ground,
-                },
-                EscapeState::Csi => {
-                    if (0x40..=0x7e).contains(&byte) {
-                        EscapeState::Ground
-                    } else {
-                        EscapeState::Csi
-                    }
-                }
-                EscapeState::String => match byte {
-                    0x07 | 0x9c => EscapeState::Ground,
-                    0x1b => EscapeState::StringEscape,
-                    _ => EscapeState::String,
-                },
-                EscapeState::StringEscape => {
-                    if byte == b'\\' {
-                        EscapeState::Ground
-                    } else {
-                        EscapeState::String
-                    }
-                }
-            };
-        }
-    }
-
-    fn is_ground(&self) -> bool {
-        matches!(self.escape, EscapeState::Ground) && self.utf8_continuations == 0
-    }
-}
-
 enum OutputRelay<'a> {
     Passthrough(io::StdoutLock<'a>),
     Transform {
         model: Box<TerminalModel>,
-        renderer: Renderer<io::StdoutLock<'a>>,
+        renderer: Renderer<TraceWriter<io::StdoutLock<'a>>>,
         path: ExecutionPath,
         mode: Mode,
         corrected: bool,
@@ -241,7 +157,7 @@ impl<'a> OutputRelay<'a> {
         model.take_dirty_rows();
         Ok(Self::Transform {
             model: Box::new(model),
-            renderer: Renderer::new(writer),
+            renderer: Renderer::new(TraceWriter::new(writer)),
             path,
             mode,
             corrected: false,
@@ -276,6 +192,7 @@ impl<'a> OutputRelay<'a> {
                         before.col + 1
                     )?;
                 }
+                renderer.writer_mut().record_input(bytes);
                 renderer.writer_mut().write_all(bytes)?;
                 boundary.feed(bytes);
                 model.feed(bytes);
@@ -323,6 +240,7 @@ impl<'a> OutputRelay<'a> {
             ..
         } = self
         {
+            renderer.writer_mut().record_resize(size.rows, size.cols);
             model.resize(size.rows, size.cols)?;
             let invalidated = model
                 .take_dirty_rows()
