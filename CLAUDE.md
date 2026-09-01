@@ -48,14 +48,12 @@ retained JavaScript regression suite.
 | `test/run.js`        | assertion runner over `test/fixtures/*.json`                   |
 | `test/voice.js`      | assertion runner for `src/voice/`                              |
 | `tools/probe*.py`    | pty probes that record the fixtures; not shipped runtime code  |
-| `tools/patch-binary.py` | patches the Claude Code executable; the Hebrew you see today comes from here, until the filter repairs rows itself |
-| `bin/hebrew-tty-build` | makes the patched build for whatever version `claude` points at; run in the background after an upgrade |
 
 ## Commands
 
 ```sh
 cargo test --all-targets        # Rust proxy suites
-npm test                        # predecessor layout, voice, and patcher regressions
+npm test                        # predecessor layout and voice regressions
 cargo build --release
 bin/hebrew-tty claude           # direct proxy launch
 bin/hebrew-tty pi
@@ -116,53 +114,18 @@ that is what lets it run outside the program instead of inside it.
   and `src/caret.js` cannot verify its recovery either: the caret falls back
   to the logical column there and copying hands the row back verbatim.
 
-- `tools/patch-binary.py` must never match a minified name. Every site is
-  found by the shape of its code and the names are read back out of the
-  match; the same build renames them all. `test/binary.js` holds recordings
-  from three builds that share no identifier, and a pattern that stops
-  resolving must fail there rather than in a 250MB write.
-- The patched executable must keep its exact length, and since 2.1.246 that is
-  no longer enough: the bytecode addresses source by offset, so a function
-  whose text has moved is parsed from the wrong place and the boot dies on a
-  parameter list that is not there. Each edit is therefore paid for out of the
-  code that follows it, nearest first, and only the run in between shifts.
-  Paying from both sides of an edit, or pooling all seven edits into one
-  region, moves too much and 2.1.246 will not start.
-- How far an edit may reach for its payment is not a constant to reason about.
-  Too narrow and there is nothing left to shrink; too wide and the build stops
-  starting. The widths are tried in order and the first whose result comes up
-  is kept.
-- `--version` is not a check, and neither is starting. The build that died on
-  a stale bytecode offset reported its version perfectly and then refused to
-  start, because printing a version touches a handful of modules and none of
-  the edited ones. Worse, a build whose edits all landed in code the program
-  never runs starts and paints its interface exactly like a good one - every
-  call site falls back to doing nothing when its helper is missing. So the
-  patcher types Hebrew at the result on a pty and reads the last cursor
-  position back off the wire: near the right edge means the row was aligned,
-  near the left means nothing happened. That is `works()`, and a width that
-  does not pass it is not kept. `--check` runs the same question at a build
-  that already exists.
-- The first payment width that works is the one to keep, and it is not always
-  the first tried. 2.1.246 runs out of slack at 200k and lands at 400k.
-- The payment regions nest, so each one is cut from a buffer that already
-  carries the edits above it. An edit reaches past the next edit to find its
-  slack - at 400k a region runs 335KB - so the seven regions contain one
-  another. Emitting them against the unedited buffer and applying them
-  lowest-last puts back the code the higher edits replaced: only the
-  lowest-offset edit survives. Every region holds its length, which is what
-  lets them be applied one at a time without moving an offset.
-- A build that starts is not a build that works. The one where six of seven
-  edits had been reverted booted and showed its interface, because the payload
-  was still injected and every call site fell back to doing nothing by design.
-  Counting the `$r*_` markers catches that much - a helper that appears once
-  is defined and never called - but not the case where every marker is paired
-  and the code holding them is never reached. Only `works()` catches that.
-- 2.1.246 does not patch. Every edit resolves and lands, and the painter they
-  land in is never run: forcing its placement column to a constant, on the
-  unpatched binary, leaves the screen rendering normally. The row anchor has
-  to be moved onto whatever paints rows now. Until then the patcher produces
-  no build for it and the shell function stands on 2.1.245-rtl.
+- The Claude Code executable is not patched, and there is no patcher any more.
+  `tools/patch-binary.py`, `bin/hebrew-tty-build` and `test/binary.js` are gone
+  with it. `claude` is whatever the launcher resolves, latest and untouched,
+  and the row repair is the proxy's alone. What ended it was 2.1.246: every
+  edit resolved and landed in a painter the build no longer runs, so from that
+  version on no patched build was ever produced - the versions directory holds
+  nothing but `-rtl.failed`. A patch that has to find seven sites by the shape
+  of their minified code, pay for each edit out of the bytes that follow it so
+  the file keeps its exact length, and then be typed at on a pty to prove the
+  program still runs the code it edited, costs an afternoon per upgrade for a
+  result the filter gives for free. The history is in `git log` if it is ever
+  needed again.
 
 ## Voice
 
