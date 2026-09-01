@@ -42,6 +42,10 @@ retained JavaScript regression suite.
 | `src/classify.rs`    | fail-safe measured execution-path classification                |
 | `src/layout.rs`      | logical recovery, per-row BiDi, mirroring, alignment, caret map |
 | `src/render.rs`      | dirty-row repaint and mapped-caret restoration                  |
+| `src/relay.rs`       | forward, model, gate, repair - the transform half of the proxy  |
+| `src/stream.rs`      | escape-sequence and synchronized-frame boundary of the stream   |
+| `src/trace.rs`       | `HEBREW_TTY_TRACE` recording of both sides of the relay         |
+| `src/bin/hebrew-tty-replay.rs` | offline replay of a recording; not shipped runtime code |
 | `src/caret.js`       | predecessor engine retained as JavaScript regression evidence   |
 | `bin/hebrew-voice`   | dictation entry point                                          |
 | `src/voice/`         | Hebrew dictation: local `voice_stream` server, ElevenLabs Scribe or local Whisper |
@@ -56,6 +60,8 @@ cargo test --all-targets        # Rust proxy suites
 npm test                        # predecessor layout and voice regressions
 cargo build --release
 bin/hebrew-tty claude           # direct proxy launch
+HEBREW_TTY_TRACE=/tmp/t.trace bin/hebrew-tty claude   # record both sides
+hebrew-tty-replay /tmp/t.trace 68 132                 # replay one; REPLAY_RERUN=1 re-runs the relay
 bin/hebrew-tty pi
 bin/hebrew-tty codex
 node bin/hebrew-voice serve     # dictation, needs no install and no root
@@ -100,6 +106,20 @@ that is what lets it run outside the program instead of inside it.
   wrong way. It is mirrored in one pass over the reordered line - and that array is cached per source line,
   so the pass marks itself. Mirroring twice swaps every bracket back, which
   looks exactly like never having run.
+- Nothing of ours is written inside a synchronized update. Claude wraps a
+  frame in `CSI ? 2026 h` ... `l`, the terminal holds the whole frame back and
+  applies it at once, and the frame is painted differentially - it rewrites
+  only the cells Claude believes changed. A repaint injected between two pty
+  reads of one frame is applied with the frame, and the cells the frame does
+  not rewrite keep what we put there. Neither side ever repaints them again:
+  Claude's screen says they are already right, and ours says the same. That is
+  the smear where a row reads `───── 104 +    if !text.len()... ───────`, half
+  rule and half a diff line from higher up the transcript. `StreamBoundary`
+  counts a frame as not-ground, so the repair waits for `l` exactly the way it
+  already waits for the end of a split escape sequence. Measured on a recorded
+  session: 196 of 249 pty reads painted a screen the proxy did not mean, and
+  none once the frame is respected.
+
 - A row carrying box drawing is not aligned. The borders of a
   table hold still because they hold no RTL, so flushing the cells to the right
   edge tears the table in half. The rule is `src/caret.js`'s `LAYOUT`. The prompt input row
@@ -267,6 +287,11 @@ that is what lets it run outside the program instead of inside it.
   the commit queue behind half a second of decoding.
 
 ## Tests
+
+`test/fixtures/terminal-proxy/traces/*.trace` are `HEBREW_TTY_TRACE`
+recordings: `<` is what the child wrote, `>` is what the terminal received,
+`r` is a resize. `tests/synchronized_update.rs` re-runs one through the real
+`Transform` and holds every row against what the proxy means to paint.
 
 Fixtures are recordings from a real pty, never hand-written strings. Do not edit
 `test/fixtures/*.json` by hand — re-record with the `tools/probe*.py` scripts.
