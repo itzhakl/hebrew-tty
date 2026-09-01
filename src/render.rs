@@ -2,7 +2,7 @@ use std::io::{self, Write};
 
 use crate::classify::{select_mode, ExecutionPath, RowDisposition};
 use crate::config::Mode;
-use crate::layout::{layout_rows, CoordinateMap, LayoutResult};
+use crate::layout::{is_rtl_char, layout_rows, CoordinateMap, LayoutResult};
 use crate::terminal::{
     CellWidth, Color, CursorSnapshot, PaneSpan, PhysicalRowSnapshot, ScreenSnapshot, StyleSnapshot,
     UnderlineStyle,
@@ -43,7 +43,7 @@ impl<W: Write> Renderer<W> {
         mode: Mode,
         invalidated_rows: &[u16],
     ) -> io::Result<RepaintSummary> {
-        let (rows, maps) = compose_layout(screen, path, mode);
+        let ComposedLayout { rows, maps } = compose_layout(screen, path, mode);
         let relative_first_repaint = self.previous.is_none() && !invalidated_rows.is_empty();
         let dirty = rows
             .iter()
@@ -62,7 +62,7 @@ impl<W: Write> Renderer<W> {
             })
             .collect::<Vec<_>>();
         let disposition = select_mode(mode, path).disposition;
-        let cursor = mapped_cursor(screen, &maps, disposition);
+        let cursor = mapped_cursor(screen, &rows, &maps, disposition);
 
         let mut relative_row = screen.cursor.row;
         if !dirty.is_empty() {
@@ -131,11 +131,12 @@ fn move_to_relative_row(writer: &mut impl Write, from: u16, to: u16) -> io::Resu
     }
 }
 
-fn compose_layout(
-    screen: &ScreenSnapshot,
-    path: &ExecutionPath,
-    mode: Mode,
-) -> (Vec<PhysicalRowSnapshot>, Vec<Vec<Option<CoordinateMap>>>) {
+struct ComposedLayout {
+    rows: Vec<PhysicalRowSnapshot>,
+    maps: Vec<Vec<Option<CoordinateMap>>>,
+}
+
+fn compose_layout(screen: &ScreenSnapshot, path: &ExecutionPath, mode: Mode) -> ComposedLayout {
     let mut rows = screen.physical_rows.clone();
     let mut maps = vec![vec![None; screen.pane_spans.len()]; rows.len()];
     for (pane_index, &pane) in screen.pane_spans.iter().enumerate() {
@@ -145,7 +146,7 @@ fn compose_layout(
             maps[row_index][pane_index] = result.coordinates;
         }
     }
-    (rows, maps)
+    ComposedLayout { rows, maps }
 }
 
 fn replace_pane(row: &mut PhysicalRowSnapshot, result: &LayoutResult, pane: PaneSpan) {
@@ -156,11 +157,12 @@ fn replace_pane(row: &mut PhysicalRowSnapshot, result: &LayoutResult, pane: Pane
 
 fn mapped_cursor(
     screen: &ScreenSnapshot,
+    rows: &[PhysicalRowSnapshot],
     maps: &[Vec<Option<CoordinateMap>>],
     disposition: RowDisposition,
 ) -> CursorSnapshot {
     let original = screen.cursor;
-    if disposition != RowDisposition::TransformLogical {
+    if disposition == RowDisposition::PassThrough {
         return original;
     }
     let Some((pane_index, pane)) = screen
@@ -184,6 +186,15 @@ fn mapped_cursor(
     {
         group_end += 1;
     }
+    if disposition == RowDisposition::RecoverVisual {
+        return recovered_visual_cursor(
+            original,
+            &screen.physical_rows[row],
+            &rows[row],
+            maps[row][pane_index].as_ref(),
+            *pane,
+        );
+    }
     let pane_width = usize::from(pane.end_col - pane.start_col);
     let logical_col =
         (row - group_start) * pane_width + usize::from(original.col.saturating_sub(pane.start_col));
@@ -205,6 +216,78 @@ fn mapped_cursor(
         }
     }
     original
+}
+
+fn recovered_visual_cursor(
+    original: CursorSnapshot,
+    painted: &PhysicalRowSnapshot,
+    laid_out: &PhysicalRowSnapshot,
+    map: Option<&CoordinateMap>,
+    pane: PaneSpan,
+) -> CursorSnapshot {
+    if map.is_none() {
+        return original;
+    }
+    let Some(painted_end) = last_glyph_col(painted, pane) else {
+        return original;
+    };
+    if original.col != painted_end {
+        return original;
+    }
+    let Some(laid_out_end) = last_glyph_col(laid_out, pane) else {
+        return original;
+    };
+    let width = rtl_run_width(painted, pane, painted_end);
+    // The run's own leading cell, not the blank before it: a bar caret drawn on
+    // the cell's left edge then touches the text instead of standing a column off.
+    if width == 0 || laid_out_end + 1 < pane.start_col + width {
+        return original;
+    }
+    CursorSnapshot {
+        col: laid_out_end + 1 - width,
+        ..original
+    }
+}
+
+// The run keeps the blanks inside it: a space between two Hebrew words belongs
+// to the run, a space before the prompt marker does not.
+fn rtl_run_width(row: &PhysicalRowSnapshot, pane: PaneSpan, end_col: u16) -> u16 {
+    let start = usize::from(pane.start_col);
+    let mut width = 0;
+    let mut pending_blanks = 0;
+    for col in (start..=usize::from(end_col)).rev() {
+        let Some(cell) = row.cells.get(col) else {
+            break;
+        };
+        let text = cell.text.trim();
+        if text.is_empty() {
+            pending_blanks += 1;
+            continue;
+        }
+        if !text.chars().any(is_rtl_char) {
+            break;
+        }
+        width += pending_blanks + 1;
+        pending_blanks = 0;
+    }
+    width
+}
+
+fn last_glyph_col(row: &PhysicalRowSnapshot, pane: PaneSpan) -> Option<u16> {
+    glyph_cols(row, pane).next_back()
+}
+
+fn glyph_cols(
+    row: &PhysicalRowSnapshot,
+    pane: PaneSpan,
+) -> impl DoubleEndedIterator<Item = u16> + '_ {
+    let start = usize::from(pane.start_col).min(row.cells.len());
+    let end = usize::from(pane.end_col).min(row.cells.len());
+    row.cells[start..end]
+        .iter()
+        .enumerate()
+        .filter(|(_, cell)| !cell.text.trim().is_empty())
+        .map(move |(index, _)| (start + index) as u16)
 }
 
 fn write_row(writer: &mut impl Write, row: &PhysicalRowSnapshot) -> io::Result<()> {

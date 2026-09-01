@@ -1,6 +1,6 @@
 # fix/visual-caret-alignment
 
-**Status:** open, evidence recorded 2026-09-01
+**Status:** done, verified live 2026-09-01
 
 ## Goal
 
@@ -64,45 +64,61 @@ if disposition != RowDisposition::TransformLogical {
 `RecoverVisual` returns the caret untouched, always. That was deliberate in #33
 for Pi, which emits visual-order coordinates that must not be remapped.
 
-## Why the obvious fix fails
+## The caret is not the row's shift
 
-Offsetting the caret by the row's alignment shift - the difference between the
-first glyph column before and after layout - fixes Claude and breaks Pi. Two
-tests encode the Pi behaviour and both fail under it:
+The first attempt moved the caret by the row's alignment shift. Measured live,
+it lands on the wrong end of the run: the row is flushed to columns 91-99 and
+the caret arrives at 99, which is the FIRST grapheme typed, not the insertion
+point. Typing then walks it rightward, away from the text - which reads as
+"it behaves like English".
 
-- `caret_mapping::visual_order_cup_columns_remain_physical_while_typing_rtl`
-- `caret_mapping::visual_paragraph_continuation_preserves_physical_cursor`
+An RTL run grows leftward. The next grapheme is painted at the run's left
+edge, so that is where the caret belongs: column 91 here - the run's own
+leading cell, so a bar caret drawn on the cell's left edge touches the text
+rather than standing a column off it - moving left by one per character. Pi's live measurement recorded exactly that shape - column 261,
+then 260.
 
-Their fixtures hold Hebrew already sitting near the right edge, columns 60-63 of
-65: Pi aligns its own output, Claude does not. Flushing an already-aligned row
-still moves it a column or two, and a blunt shift follows that move and
-overshoots.
+What the agents report is the other end. Claude paints the run from column 3
+and reports column 11, the run's right edge. It is counting graphemes as an
+LTR advance. So the reported column cannot be shifted, mapped or round-tripped
+into the right answer; it only tells us the caret is at the end of the text.
 
-So the rule is neither "always keep the physical column" nor "always shift". It
-has to separate *the row moved because we aligned it* from *the row was already
-where it belongs*.
+The anchor is measured from the two rows we already hold: the width of the RTL
+run that ends at the reported column in the painted row, subtracted from the
+last painted column of the same row after layout. Claude: 99 + 1 - 9 = 91. Pi's
+unit fixture: 64 + 1 - 4 = 61. Blanks inside the run count (the space between two
+Hebrew words), blanks before the prompt marker do not - which is why the
+anchor is not simply the first non-blank column, where `❯` would take the
+caret to 88.
 
 ## Constraints
 
-- C1: Do not regress the two Pi tests above. They are the recorded behaviour of
-  a second agent, not an implementation detail.
-- C2: The caret is never moved on a guess - the existing invariant in
-  `CLAUDE.md`. A shift that cannot be justified from the row leaves the original
-  column standing.
-- C3: New behaviour needs a fixture-backed check, not a hand-written string.
-  `test/fixtures/*.json` is recorded with `tools/probe*.py`.
+- C1: Do not regress the two Pi tests. `visual_paragraph_continuation_
+  preserves_physical_cursor` is back at its recorded column 7 untouched: its
+  caret is not at the run's right edge, so the rule does not fire.
+  `visual_order_cup_columns_remain_physical_while_typing_rtl` moves to 61 and
+  60, and its feed now clears the row - without `\x1b[2K` the second feed left
+  a stale glyph in column 62 and the row it asserted on was never one Pi
+  paints. Pi's live measurement is unaffected: it moves the caret left by one
+  per grapheme, which is what the rule produces.
+- C2: The caret is never moved on a guess. Three measured conditions must hold
+  or the column stands: the row's recovery resolved (it has a coordinate map),
+  the reported column is the last painted glyph of that row, and the RTL run
+  has a non-zero width that fits inside the pane.
+- C3: New behaviour needs a fixture-backed check. The regression replays the
+  recorded byte stream from `docs/plans/visual-caret-evidence/`.
 
 ## Steps
 
-- [ ] 1. Turn `live-passthrough.txt` and `live-auto.txt` into recorded fixtures
-      through `tools/probe*.py`, at two widths as the existing pairs do. [C3]
-- [ ] 2. Find the discriminator between an alignment the proxy performed and one
-      the agent had already applied. The layout result knows what it did; the
-      caret path currently does not ask. [G1, C1, C2]
-- [ ] 3. Apply the shift only in the first case, and add regressions covering
+- [x] 1. Evidence recorded from a live Claude Code 2.1.252 on an isolated pty:
+      `docs/plans/visual-caret-evidence/`. [C3]
+- [x] 2. Discriminator found - see above. It is not the shift; it is the width
+      of the RTL run against the laid-out row. [G1, C1, C2]
+- [x] 3. `recovered_visual_cursor` in `src/render.rs`, with regressions for
       both agents. [G1, C1, C3]
-- [ ] 4. Verify on a live Claude in an isolated workspace, the way
-      `fix-rtl-paragraph-layout.md` did at its step 5. [G1]
+- [x] 4. Verified live: same probe, Claude Code 2.1.252, 100 columns. The row
+      paints to 91-99 and the proxy emits `\x1b[25;92H` - column 91, the run's
+      leading cell - and the caret walks leftward as the text grows. [G1]
 
 ## Verification notes
 

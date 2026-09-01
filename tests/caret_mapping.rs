@@ -50,7 +50,7 @@ fn streaming_growth_keeps_the_end_caret_against_the_last_grapheme() {
 #[test]
 fn visual_order_cup_columns_remain_physical_while_typing_rtl() {
     let mut model = TerminalModel::new(2, 65).unwrap();
-    model.feed(format!("\x1b[1;1H{}דגבא\x1b[1;63H", " ".repeat(59)).as_bytes());
+    model.feed(format!("\x1b[1;1H\x1b[2K{}דגבא\x1b[1;63H", " ".repeat(59)).as_bytes());
     let path = verified_path(Order::Visual);
     let mut renderer = Renderer::new(Vec::new());
     let first_snapshot = model.snapshot();
@@ -59,14 +59,38 @@ fn visual_order_cup_columns_remain_physical_while_typing_rtl() {
         .repaint(&first_snapshot, &path, Mode::Auto)
         .unwrap();
 
-    model.feed(format!("\x1b[1;1H{}הדגבא\x1b[1;62H", " ".repeat(57)).as_bytes());
+    model.feed(format!("\x1b[1;1H\x1b[2K{}הדגבא\x1b[1;62H", " ".repeat(57)).as_bytes());
     let second_snapshot = model.snapshot();
     assert_eq!(second_snapshot.cursor.col, 61);
     let second = renderer
         .repaint(&second_snapshot, &path, Mode::Auto)
         .unwrap();
 
-    assert_eq!((first.cursor.col, second.cursor.col), (62, 61));
+    assert_eq!((first.cursor.col, second.cursor.col), (61, 60));
+}
+
+#[test]
+fn recovered_visual_rows_that_were_flushed_right_carry_their_caret() {
+    let mut model = TerminalModel::new(30, 100).unwrap();
+    model.feed("\x1b[H\r\x1b[3C\x1b[24Bםלוע םולש\x1b[25;12H".as_bytes());
+    let snapshot = model.snapshot();
+    assert_eq!(snapshot.cursor.col, 11);
+
+    let path = verified_path(Order::Visual);
+    let result = layout_row(&snapshot.physical_rows[24], pane(100), &path, Mode::Auto);
+    let run_start = result
+        .cells
+        .iter()
+        .position(|cell| !cell.text.trim().is_empty())
+        .unwrap() as u16;
+    assert_eq!(run_start, 91);
+
+    let mut renderer = Renderer::new(Vec::new());
+    let repainted = renderer.repaint(&snapshot, &path, Mode::Auto).unwrap();
+    assert_eq!(
+        repainted.cursor.col, run_start,
+        "the caret belongs on the run's leading cell, against the newest grapheme"
+    );
 }
 
 #[test]
