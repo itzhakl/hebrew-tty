@@ -73,8 +73,9 @@ point. Typing then walks it rightward, away from the text - which reads as
 "it behaves like English".
 
 An RTL run grows leftward. The next grapheme is painted at the run's left
-edge, so that is where the caret belongs: column 90 here, moving left by one
-per character. Pi's live measurement recorded exactly that shape - column 261,
+edge, so that is where the caret belongs: column 91 here - the run's own
+leading cell, so a bar caret drawn on the cell's left edge touches the text
+rather than standing a column off it - moving left by one per character. Pi's live measurement recorded exactly that shape - column 261,
 then 260.
 
 What the agents report is the other end. Claude paints the run from column 3
@@ -84,19 +85,19 @@ into the right answer; it only tells us the caret is at the end of the text.
 
 The anchor is measured from the two rows we already hold: the width of the RTL
 run that ends at the reported column in the painted row, subtracted from the
-last painted column of the same row after layout. Claude: 99 - 9 = 90. Pi's
-unit fixture: 64 - 4 = 60. Blanks inside the run count (the space between two
+last painted column of the same row after layout. Claude: 99 + 1 - 9 = 91. Pi's
+unit fixture: 64 + 1 - 4 = 61. Blanks inside the run count (the space between two
 Hebrew words), blanks before the prompt marker do not - which is why the
 anchor is not simply the first non-blank column, where `❯` would take the
-caret to 87.
+caret to 88.
 
 ## Constraints
 
 - C1: Do not regress the two Pi tests. `visual_paragraph_continuation_
   preserves_physical_cursor` is back at its recorded column 7 untouched: its
   caret is not at the run's right edge, so the rule does not fire.
-  `visual_order_cup_columns_remain_physical_while_typing_rtl` moves to 60 and
-  59, and its feed now clears the row - without `\x1b[2K` the second feed left
+  `visual_order_cup_columns_remain_physical_while_typing_rtl` moves to 61 and
+  60, and its feed now clears the row - without `\x1b[2K` the second feed left
   a stale glyph in column 62 and the row it asserted on was never one Pi
   paints. Pi's live measurement is unaffected: it moves the caret left by one
   per grapheme, which is what the rule produces.
@@ -116,8 +117,8 @@ caret to 87.
 - [x] 3. `recovered_visual_cursor` in `src/render.rs`, with regressions for
       both agents. [G1, C1, C3]
 - [x] 4. Verified live: same probe, Claude Code 2.1.252, 100 columns. The row
-      paints to 91-99 and the proxy emits `\x1b[25;91H` - column 90, the run's
-      left edge - and the caret walks 92, 91 leftward as the text grows. [G1]
+      paints to 91-99 and the proxy emits `\x1b[25;92H` - column 91, the run's
+      leading cell - and the caret walks leftward as the text grows. [G1]
 
 ## Verification notes
 

@@ -66,7 +66,7 @@ fn visual_order_cup_columns_remain_physical_while_typing_rtl() {
         .repaint(&second_snapshot, &path, Mode::Auto)
         .unwrap();
 
-    assert_eq!((first.cursor.col, second.cursor.col), (60, 59));
+    assert_eq!((first.cursor.col, second.cursor.col), (61, 60));
 }
 
 #[test]
@@ -88,9 +88,8 @@ fn recovered_visual_rows_that_were_flushed_right_carry_their_caret() {
     let mut renderer = Renderer::new(Vec::new());
     let repainted = renderer.repaint(&snapshot, &path, Mode::Auto).unwrap();
     assert_eq!(
-        repainted.cursor.col,
-        run_start - 1,
-        "the caret belongs where the next grapheme is painted, at the run's left edge"
+        repainted.cursor.col, run_start,
+        "the caret belongs on the run's leading cell, against the newest grapheme"
     );
 }
 

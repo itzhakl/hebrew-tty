@@ -238,11 +238,13 @@ fn recovered_visual_cursor(
         return original;
     };
     let width = rtl_run_width(painted, pane, painted_end);
-    if width == 0 || laid_out_end < pane.start_col + width {
+    // The run's own leading cell, not the blank before it: a bar caret drawn on
+    // the cell's left edge then touches the text instead of standing a column off.
+    if width == 0 || laid_out_end + 1 < pane.start_col + width {
         return original;
     }
     CursorSnapshot {
-        col: laid_out_end - width,
+        col: laid_out_end + 1 - width,
         ..original
     }
 }
