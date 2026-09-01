@@ -30,16 +30,6 @@ impl<W> TraceWriter<W> {
         self.sink.is_some()
     }
 
-    pub fn record_input(&mut self, bytes: &[u8]) {
-        self.record(b'<', bytes);
-    }
-
-    pub fn record_resize(&mut self, rows: u16, cols: u16) {
-        if let Some(sink) = self.sink.as_mut() {
-            let _ = writeln!(sink, "r {rows} {cols}");
-        }
-    }
-
     fn record(&mut self, tag: u8, bytes: &[u8]) {
         let Some(sink) = self.sink.as_mut() else {
             return;
@@ -55,6 +45,18 @@ impl<W> TraceWriter<W> {
 
     pub fn into_inner(self) -> W {
         self.inner
+    }
+}
+
+impl<W: Write> crate::relay::RelayWriter for TraceWriter<W> {
+    fn record_input(&mut self, bytes: &[u8]) {
+        self.record(b'<', bytes);
+    }
+
+    fn record_resize(&mut self, rows: u16, cols: u16) {
+        if let Some(sink) = self.sink.as_mut() {
+            let _ = writeln!(sink, "r {rows} {cols}");
+        }
     }
 }
 

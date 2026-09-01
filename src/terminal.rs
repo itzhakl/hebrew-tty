@@ -152,6 +152,32 @@ impl TerminalModel {
         self.accumulate_dirty(&before);
     }
 
+    /// Offline replay only: one row without the cost of a whole screen.
+    pub fn row_text(&self, row: u16) -> String {
+        if row >= self.size.rows {
+            return String::new();
+        }
+        let line = Line(i32::from(row));
+        (0..self.size.cols)
+            .map(|col| {
+                let cell = &self.term.grid()[line][Column(usize::from(col))];
+                if cell.c == '\0' {
+                    ' '
+                } else {
+                    cell.c
+                }
+            })
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    }
+
+    /// Offline replay only: advances the screen without the per-feed snapshot
+    /// the dirty accounting costs, which a million recorded records cannot pay.
+    pub fn feed_untracked(&mut self, bytes: &[u8]) {
+        self.processor.advance(&mut self.term, bytes);
+    }
+
     pub fn resize(&mut self, rows: u16, cols: u16) -> Result<(), TerminalError> {
         let size = checked_size(rows, cols)?;
         self.term.resize(size);

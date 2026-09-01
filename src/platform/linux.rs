@@ -12,10 +12,7 @@ use std::time::Duration;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use hebrew_tty::classify::{select_mode, ExecutionPath, RowDisposition};
 use hebrew_tty::config::Mode;
-use hebrew_tty::layout::is_rtl_char;
-use hebrew_tty::render::Renderer;
-use hebrew_tty::stream::StreamBoundary;
-use hebrew_tty::terminal::TerminalModel;
+use hebrew_tty::relay::Transform;
 use hebrew_tty::trace::TraceWriter;
 use nix::sys::signal::{killpg, Signal};
 use nix::unistd::Pid;
@@ -131,16 +128,7 @@ fn read_output(mut reader: Box<dyn io::Read + Send>, sender: mpsc::SyncSender<Ou
 
 enum OutputRelay<'a> {
     Passthrough(io::StdoutLock<'a>),
-    Transform {
-        model: Box<TerminalModel>,
-        renderer: Renderer<TraceWriter<io::StdoutLock<'a>>>,
-        path: ExecutionPath,
-        mode: Mode,
-        corrected: bool,
-        boundary: StreamBoundary,
-        pending_rows: Vec<u16>,
-        pending_cursor: bool,
-    },
+    Transform(Box<Transform<TraceWriter<io::StdoutLock<'a>>>>),
 }
 
 impl<'a> OutputRelay<'a> {
@@ -153,18 +141,13 @@ impl<'a> OutputRelay<'a> {
         if select_mode(mode, &path).disposition == RowDisposition::PassThrough {
             return Ok(Self::Passthrough(writer));
         }
-        let mut model = TerminalModel::new(size.rows, size.cols)?;
-        model.take_dirty_rows();
-        Ok(Self::Transform {
-            model: Box::new(model),
-            renderer: Renderer::new(TraceWriter::new(writer)),
+        Ok(Self::Transform(Box::new(Transform::new(
+            TraceWriter::new(writer),
+            size.rows,
+            size.cols,
             path,
             mode,
-            corrected: false,
-            boundary: StreamBoundary::default(),
-            pending_rows: Vec::new(),
-            pending_cursor: false,
-        })
+        )?)))
     }
 
     fn feed(&mut self, bytes: &[u8]) -> io::Result<()> {
@@ -173,109 +156,16 @@ impl<'a> OutputRelay<'a> {
                 writer.write_all(bytes)?;
                 writer.flush()
             }
-            Self::Transform {
-                model,
-                renderer,
-                path,
-                mode,
-                corrected,
-                boundary,
-                pending_rows,
-                pending_cursor,
-            } => {
-                let before = model.cursor();
-                if *corrected && boundary.is_ground() {
-                    write!(
-                        renderer.writer_mut(),
-                        "\x1b[{};{}H",
-                        before.row + 1,
-                        before.col + 1
-                    )?;
-                }
-                renderer.writer_mut().record_input(bytes);
-                renderer.writer_mut().write_all(bytes)?;
-                boundary.feed(bytes);
-                model.feed(bytes);
-                pending_rows.extend(model.take_dirty_rows().into_iter().map(|row| row.row_index));
-                let snapshot = model.snapshot();
-                *pending_cursor |= before != snapshot.cursor;
-                if *corrected {
-                    pending_rows.extend(rtl_rows(&snapshot));
-                }
-                pending_rows.sort_unstable();
-                pending_rows.dedup();
-                if !boundary.is_ground() {
-                    return renderer.writer_mut().flush();
-                }
-                if !screen_has_rtl(&snapshot) {
-                    if *corrected && (!pending_rows.is_empty() || *pending_cursor) {
-                        renderer.repaint_dirty(&snapshot, path, *mode, pending_rows)?;
-                    }
-                    *corrected = false;
-                    pending_rows.clear();
-                    *pending_cursor = false;
-                    return renderer.writer_mut().flush();
-                }
-                if pending_rows.is_empty() && !*pending_cursor {
-                    return renderer.writer_mut().flush();
-                }
-                renderer.repaint_dirty(&snapshot, path, *mode, pending_rows)?;
-                *corrected = true;
-                pending_rows.clear();
-                *pending_cursor = false;
-                Ok(())
-            }
+            Self::Transform(transform) => transform.feed(bytes),
         }
     }
 
     fn resize(&mut self, size: WindowSize) -> Result<(), Box<dyn Error>> {
-        if let Self::Transform {
-            model,
-            renderer,
-            path,
-            mode,
-            corrected,
-            pending_rows,
-            pending_cursor,
-            ..
-        } = self
-        {
-            renderer.writer_mut().record_resize(size.rows, size.cols);
-            model.resize(size.rows, size.cols)?;
-            let invalidated = model
-                .take_dirty_rows()
-                .into_iter()
-                .map(|row| row.row_index)
-                .collect::<Vec<_>>();
-            let snapshot = model.snapshot();
-            if screen_has_rtl(&snapshot) {
-                renderer.repaint_dirty(&snapshot, path, *mode, &invalidated)?;
-                *corrected = true;
-            } else {
-                *corrected = false;
-            }
-            pending_rows.clear();
-            *pending_cursor = false;
+        if let Self::Transform(transform) = self {
+            transform.resize(size.rows, size.cols)?;
         }
         Ok(())
     }
-}
-
-fn rtl_rows(screen: &hebrew_tty::terminal::ScreenSnapshot) -> impl Iterator<Item = u16> + '_ {
-    screen
-        .physical_rows
-        .iter()
-        .enumerate()
-        .filter(|(_, row)| {
-            row.cells
-                .iter()
-                .any(|cell| cell.text.chars().any(is_rtl_char))
-        })
-        .map(|(index, _)| index as u16)
-}
-
-fn screen_has_rtl(screen: &hebrew_tty::terminal::ScreenSnapshot) -> bool {
-    rtl_rows(screen).next().is_some()
 }
 
 fn adopt_agent_process_name(argv0: Option<&OsStr>) {

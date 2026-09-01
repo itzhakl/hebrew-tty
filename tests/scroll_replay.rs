@@ -1,9 +1,7 @@
-use std::io::Write;
-
 use hebrew_tty::classify::{Confidence, ExecutionPath, Order, Wrapping};
 use hebrew_tty::config::Mode;
 use hebrew_tty::layout::layout_rows;
-use hebrew_tty::render::Renderer;
+use hebrew_tty::relay::Transform;
 use hebrew_tty::stream::StreamBoundary;
 use hebrew_tty::terminal::{PaneSpan, PhysicalRowSnapshot, TerminalModel};
 
@@ -38,83 +36,20 @@ fn text(row: &PhysicalRowSnapshot) -> String {
         .to_string()
 }
 
-fn rtl_rows(screen: &hebrew_tty::terminal::ScreenSnapshot) -> impl Iterator<Item = u16> + '_ {
-    screen
-        .physical_rows
-        .iter()
-        .enumerate()
-        .filter(|(_, row)| {
-            row.cells
-                .iter()
-                .any(|cell| cell.text.chars().any(hebrew_tty::layout::is_rtl_char))
-        })
-        .map(|(index, _)| index as u16)
-}
-
-fn screen_has_rtl(screen: &hebrew_tty::terminal::ScreenSnapshot) -> bool {
-    rtl_rows(screen).next().is_some()
-}
-
-/// Drives the same order of writes `OutputRelay::feed` performs, into a second
-/// model standing in for the real terminal, and returns (real screen, intended).
+/// Drives the real relay and returns (what the terminal was painted, what the
+/// proxy meant to paint).
 fn replay(rows: u16, cols: u16, chunks: &[Vec<u8>]) -> (Vec<String>, Vec<String>) {
     let path = verified_path();
-    let mut model = TerminalModel::new(rows, cols).unwrap();
+    let mut transform = Transform::new(Vec::new(), rows, cols, path.clone(), Mode::Auto).unwrap();
     let mut outer = TerminalModel::new(rows, cols).unwrap();
-    let mut renderer = Renderer::new(Vec::new());
-    model.take_dirty_rows();
-    let mut corrected = false;
-
-    let mut boundary = StreamBoundary::default();
-    let mut pending_rows: Vec<u16> = Vec::new();
-    let mut pending_cursor = false;
 
     for chunk in chunks {
-        let before = model.cursor();
-        if corrected && boundary.is_ground() {
-            write!(
-                renderer.writer_mut(),
-                "\x1b[{};{}H",
-                before.row + 1,
-                before.col + 1
-            )
-            .unwrap();
-        }
-        renderer.writer_mut().write_all(chunk).unwrap();
-        boundary.feed(chunk);
-        model.feed(chunk);
-        pending_rows.extend(model.take_dirty_rows().into_iter().map(|row| row.row_index));
-        let snapshot = model.snapshot();
-        pending_cursor |= before != snapshot.cursor;
-        if corrected {
-            pending_rows.extend(rtl_rows(&snapshot));
-        }
-        pending_rows.sort_unstable();
-        pending_rows.dedup();
-        if boundary.is_ground() {
-            if !screen_has_rtl(&snapshot) {
-                if corrected && (!pending_rows.is_empty() || pending_cursor) {
-                    renderer
-                        .repaint_dirty(&snapshot, &path, Mode::Auto, &pending_rows)
-                        .unwrap();
-                }
-                corrected = false;
-                pending_rows.clear();
-                pending_cursor = false;
-            } else if !pending_rows.is_empty() || pending_cursor {
-                renderer
-                    .repaint_dirty(&snapshot, &path, Mode::Auto, &pending_rows)
-                    .unwrap();
-                corrected = true;
-                pending_rows.clear();
-                pending_cursor = false;
-            }
-        }
-        let bytes = std::mem::take(renderer.writer_mut());
-        outer.feed(&bytes);
+        transform.feed(chunk).unwrap();
+        let painted = std::mem::take(transform.writer_mut());
+        outer.feed(&painted);
     }
 
-    let snapshot = model.snapshot();
+    let snapshot = transform.model().snapshot();
     let intended = layout_rows(&snapshot.physical_rows, pane(cols), &path, Mode::Auto)
         .into_iter()
         .map(|result| {
@@ -131,6 +66,43 @@ fn replay(rows: u16, cols: u16, chunks: &[Vec<u8>]) -> (Vec<String>, Vec<String>
         .map(text)
         .collect::<Vec<_>>();
     (real, intended)
+}
+
+/// The agent paints a synchronized frame differentially, so anything of ours
+/// applied with that frame stays in the cells the frame does not rewrite.
+#[test]
+fn nothing_of_ours_is_written_inside_a_synchronized_update() {
+    let mut transform = Transform::new(Vec::new(), 10, 40, verified_path(), Mode::Auto).unwrap();
+    let mut boundary = StreamBoundary::default();
+
+    // One frame, delivered as four pty reads: the middle two land inside it.
+    let chunks: Vec<Vec<u8>> = vec![
+        b"\x1b[?2026h\x1b[1;1H".to_vec(),
+        "שלום עולם".as_bytes().to_vec(),
+        "\r\n\x1b[2;1Hעוד שורה".as_bytes().to_vec(),
+        b"\x1b[?2026l".to_vec(),
+    ];
+
+    let mut painted_after_the_frame = Vec::new();
+    for chunk in &chunks {
+        transform.feed(chunk).unwrap();
+        boundary.feed(chunk);
+        let painted = std::mem::take(transform.writer_mut());
+        if boundary.is_synchronized() {
+            assert_eq!(
+                painted, *chunk,
+                "our own bytes landed inside the synchronized frame"
+            );
+        } else {
+            painted_after_the_frame = painted;
+        }
+    }
+
+    // The frame closed, so the repair is owed and must have been paid.
+    assert!(
+        painted_after_the_frame.len() > chunks[3].len(),
+        "the rows were never repaired after the frame closed"
+    );
 }
 
 #[test]
