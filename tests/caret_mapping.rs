@@ -50,7 +50,7 @@ fn streaming_growth_keeps_the_end_caret_against_the_last_grapheme() {
 #[test]
 fn visual_order_cup_columns_remain_physical_while_typing_rtl() {
     let mut model = TerminalModel::new(2, 65).unwrap();
-    model.feed(format!("\x1b[1;1H{}דגבא\x1b[1;63H", " ".repeat(59)).as_bytes());
+    model.feed(format!("\x1b[1;1H\x1b[2K{}דגבא\x1b[1;63H", " ".repeat(59)).as_bytes());
     let path = verified_path(Order::Visual);
     let mut renderer = Renderer::new(Vec::new());
     let first_snapshot = model.snapshot();
@@ -59,14 +59,14 @@ fn visual_order_cup_columns_remain_physical_while_typing_rtl() {
         .repaint(&first_snapshot, &path, Mode::Auto)
         .unwrap();
 
-    model.feed(format!("\x1b[1;1H{}הדגבא\x1b[1;62H", " ".repeat(57)).as_bytes());
+    model.feed(format!("\x1b[1;1H\x1b[2K{}הדגבא\x1b[1;62H", " ".repeat(57)).as_bytes());
     let second_snapshot = model.snapshot();
     assert_eq!(second_snapshot.cursor.col, 61);
     let second = renderer
         .repaint(&second_snapshot, &path, Mode::Auto)
         .unwrap();
 
-    assert_eq!((first.cursor.col, second.cursor.col), (64, 63));
+    assert_eq!((first.cursor.col, second.cursor.col), (60, 59));
 }
 
 #[test]
@@ -78,19 +78,19 @@ fn recovered_visual_rows_that_were_flushed_right_carry_their_caret() {
 
     let path = verified_path(Order::Visual);
     let result = layout_row(&snapshot.physical_rows[24], pane(100), &path, Mode::Auto);
-    let first_glyph = result
+    let run_start = result
         .cells
         .iter()
         .position(|cell| !cell.text.trim().is_empty())
-        .unwrap();
-    assert_eq!(first_glyph, 3 + usize::from(result.align_offset));
+        .unwrap() as u16;
+    assert_eq!(run_start, 91);
 
     let mut renderer = Renderer::new(Vec::new());
     let repainted = renderer.repaint(&snapshot, &path, Mode::Auto).unwrap();
     assert_eq!(
         repainted.cursor.col,
-        11 + result.align_offset,
-        "caret must follow the row it was aligned with"
+        run_start - 1,
+        "the caret belongs where the next grapheme is painted, at the run's left edge"
     );
 }
 
@@ -105,7 +105,7 @@ fn visual_paragraph_continuation_preserves_physical_cursor() {
         .unwrap();
 
     assert_eq!(result.cursor.row, 1);
-    assert_eq!(result.cursor.col, 19);
+    assert_eq!(result.cursor.col, 7);
 }
 
 #[test]
