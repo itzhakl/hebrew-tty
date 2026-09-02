@@ -790,7 +790,19 @@ async function testWhisperIdleUnload() {
     'a sub-minute idle window is raised to the floor');
   eq(config.normalizeWhisper({ idleUnloadMs: 0 }).idleUnloadMs, 0,
     'but 0 survives the floor as the explicit opt-out');
-  eq(config.normalizeWhisper({}).idleUnloadMs, 600000, 'ten minutes is the default');
+  eq(config.normalizeWhisper({}).idleUnloadMs, 300000, 'five minutes is the default');
+
+  // 4. a preload with no session behind it still gives the model back. This is
+  // the long-running server: `_ensure()` cancels the unload on the way in, and
+  // nothing closes to arm it again.
+  proc = fakeSidecar();
+  w = new WhisperProvider({ idleUnloadMs: 40 }, () => proc);
+  const p5 = w.preload();
+  proc.say(READY);
+  await p5;
+  ok(w.idleTimer !== null, 'preloading arms the unload with no session to close');
+  await tick(); await tick();
+  eq(w.proc, null, 'and a preloaded model is given back after a quiet stretch');
 }
 
 // ---------- run ----------
