@@ -94,15 +94,9 @@ Rust terminal proxy.
 
 ## Dictation
 
-Hebrew dictation for Claude Code's `/voice` uses Gemini 3.5 Transcribe Live,
-ElevenLabs Scribe, or a local Whisper sidecar.
-
-```sh
-hebrew-voice setup --provider gemini   # stores the AIza… key, mode 0600
-hebrew-voice serve
-hebrew-voice -- claude
-hebrew-voice levels
-```
+Hebrew dictation moved to its own service:
+[hebrew-voice](https://github.com/itzhakl/hebrew-voice). It shares no code with
+the proxy and is installed separately.
 
 ## Verification
 
