@@ -21,6 +21,14 @@ const {
   MAX_KEYTERM_LENGTH
 } = require('../src/voice/elevenlabs');
 const { WhisperProvider, mapWhisperError, encodeFrame, resolvePython, venvPython } = require('../src/voice/whisper');
+const {
+  GeminiProvider,
+  buildSetup,
+  buildRealtimeUrl: buildGeminiUrl,
+  mapGeminiError,
+  languageCodes,
+  DEFAULT_MODEL: DEFAULT_GEMINI_MODEL
+} = require('../src/voice/gemini');
 const config = require('../src/voice/config');
 const server = require('../src/voice/server');
 const cli = require('../src/voice/cli');
@@ -959,6 +967,99 @@ async function testWhisperSidecarFailureIsExplained() {
   ok(/Traceback|ModuleNotFound/.test(message), 'the python traceback is kept, not swallowed');
 }
 
+// ---------- gemini ----------
+
+function testGeminiSetup() {
+  const setup = buildSetup({
+    languageCode: 'he',
+    secondaryLanguages: ['en'],
+    keyterms: ['git', 'npm'],
+    noVerbatim: false
+  }).setup;
+  eq(setup.model, `models/${DEFAULT_GEMINI_MODEL}`, 'the model rides as a model path');
+  eq(setup.generationConfig.responseModalities[0], 'TEXT', 'transcription asks for TEXT, not AUDIO');
+  // "he" and "iw" are both rejected by the Live API - it wants a region.
+  eq(setup.inputAudioTranscription.languageCodes.join(','), 'he-IL,en-US', 'languages carry a region');
+  eq(setup.inputAudioTranscription.mode, 'VERBATIM', 'dictation returns what was said by default');
+  eq(buildSetup({ noVerbatim: true }).setup.inputAudioTranscription.mode, 'SMART', 'no-verbatim maps to SMART');
+  eq(setup.inputAudioTranscription.customVocabulary.join(','), 'git,npm', 'keyterms bias as custom vocabulary');
+  eq(languageCodes({ languageCode: 'he', secondaryLanguages: ['he', 'en'] }).length, 2, 'a repeated language is sent once');
+
+  ok(/key=AIzaTest/.test(buildGeminiUrl({ credential: 'AIzaTest' })), 'the key goes on the query string');
+  throwsWith(() => buildGeminiUrl({ credential: 'sk_eleven' }), 'not a Gemini API key', 'a Scribe key is caught before the mic opens');
+  throwsWith(() => buildGeminiUrl({ credential: '{"type":"service_account"}' }), 'not a Gemini API key', 'service-account JSON is caught');
+  eq(mapGeminiError({ error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'quota' } }).hint, 'quota', 'quota errors are labelled');
+  eq(mapGeminiError({ error: { code: 403, status: 'PERMISSION_DENIED', message: 'no' } }).hint, 'set-api-key', 'a rejected key is labelled');
+
+  const cfg = config.load({ provider: 'gemini', geminiCredential: 'AIzaTest', model: 'scribe_v2_realtime' }, {}, '/nonexistent');
+  eq(cfg.model, DEFAULT_GEMINI_MODEL, 'a leftover Scribe model is replaced when the provider switches');
+  eq(cli.buildProvider(cfg).id, 'gemini', 'the gemini provider is built');
+  eq(config.load({ provider: 'gemini' }, { GEMINI_API_KEY: 'AIzaEnv' }, '/nonexistent').geminiCredential, 'AIzaEnv', 'the environment key is honoured');
+}
+
+async function testGeminiSession() {
+  const socket = fakeSocket();
+  const interims = [];
+  const finals = [];
+  const session = await new GeminiProvider(
+    { credential: 'AIzaTest', languageCode: 'he', chunkMs: 20 },
+    async () => socket
+  ).createSession({
+    onInterim: (t) => interims.push(t),
+    onFinal: (t) => finals.push(t),
+    onError: (e) => finals.push(`ERR ${e.message}`)
+  });
+
+  eq(socket.sent[0].setup.model, `models/${DEFAULT_GEMINI_MODEL}`, 'setup is the first frame');
+  // Audio before setupComplete would be dropped by the server, so it is held.
+  session.sendAudio(Buffer.alloc(640));
+  eq(socket.sent.length, 1, 'audio waits for the handshake');
+  socket.reply({ setupComplete: {} });
+  eq(socket.sent.length, 2, 'the held audio ships once setup is acknowledged');
+  eq(socket.sent[1].realtimeInput.audio.mimeType, 'audio/pcm;rate=16000', 'the declared rate matches the CLI');
+  eq(Buffer.from(socket.sent[1].realtimeInput.audio.data, 'base64').length, 640, 'the audio survives base64');
+
+  socket.reply({ serverContent: { interimInputTranscription: { text: 'שלום' } } });
+  eq(interims[0], 'שלום', 'an interim hypothesis surfaces as interim');
+  eq(finals.length, 0, 'an interim does not commit');
+  socket.reply({ serverContent: { inputTranscription: { text: 'שלום עולם' } } });
+  eq(finals[0], 'שלום עולם', 'inputTranscription is the commit');
+
+  session.sendAudio(Buffer.alloc(320));
+  eq(socket.sent.length, 2, 'a part chunk is held back');
+  session.flush();
+  eq(Buffer.from(socket.sent[2].realtimeInput.audio.data, 'base64').length, 320, 'flush ships the tail');
+  eq(socket.sent[3].realtimeInput.audioStreamEnd, true, 'flush asks for immediate finalization');
+  session.sendAudio(Buffer.alloc(640));
+  eq(socket.sent.length, 4, 'no audio is written after flush');
+
+  socket.reply({ serverContent: { inputTranscription: { text: 'הזנב' } } });
+  eq(finals[1], 'הזנב', 'the flushed tail commits');
+  eq(await session.endSegment(), '', 'push mode commits through onFinal, not endSegment');
+
+  // A final we asked for and never got must not hang the close path.
+  const slow = fakeSocket();
+  const slowSession = await new GeminiProvider(
+    { credential: 'AIzaTest', settleTimeoutMs: 100 },
+    async () => slow
+  ).createSession({ onInterim: () => {}, onFinal: () => {}, onError: () => {} });
+  slow.reply({ setupComplete: {} });
+  slowSession.sendAudio(Buffer.alloc(640));
+  slowSession.flush();
+  const waited = Date.now();
+  eq(await slowSession.endSegment(), '', 'an unanswered final falls through');
+  ok(Date.now() - waited >= 90, 'endSegment waits for the final it asked for');
+
+  const errors = [];
+  const broken = fakeSocket();
+  await new GeminiProvider({ credential: 'AIzaTest' }, async () => broken).createSession({
+    onInterim: () => {},
+    onError: (e) => errors.push(e)
+  });
+  broken.reply({ error: { code: 401, status: 'UNAUTHENTICATED', message: 'API key not valid' } });
+  eq(errors[0].hint, 'set-api-key', 'a protocol error frame reaches the user');
+}
+
 async function main() {
   testVad();
   testNoisyRoom();
@@ -968,6 +1069,8 @@ async function main() {
   testCliParse();
   testProviderSelection();
   testWhisperConfig();
+  testGeminiSetup();
+  await testGeminiSession();
   await testElevenLabsSession();
   await testSocketRoundTrip();
   await testCommitIsAlwaysAPair();
