@@ -94,10 +94,11 @@ Rust terminal proxy.
 
 ## Dictation
 
-Hebrew dictation for Claude Code's `/voice` uses ElevenLabs Scribe or a local
-Whisper sidecar.
+Hebrew dictation for Claude Code's `/voice` uses Gemini 3.5 Transcribe Live,
+ElevenLabs Scribe, or a local Whisper sidecar.
 
 ```sh
+hebrew-voice setup --provider gemini   # stores the AIza… key, mode 0600
 hebrew-voice serve
 hebrew-voice -- claude
 hebrew-voice levels
