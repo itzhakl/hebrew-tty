@@ -199,7 +199,7 @@ that is what lets it run outside the program instead of inside it.
 - **The model is resident, not immortal.** It is ~1.3 GB, and on a desktop that
   dictates a few times a day the kernel swaps it out long before the next press
   - so "stays loaded" was already costing a disk read without saving one.
-  `whisper.idleUnloadMs` (default ten minutes, `0` to opt out) ends the sidecar
+  `whisper.idleUnloadMs` (default five minutes, `0` to opt out) ends the sidecar
   after a quiet stretch; `_ensure()` reloads it on the next press. The window is
   floored at a minute so it can never unload between two sentences of one
   thought, and the timer is `unref`'d - a pending unload must never be the
