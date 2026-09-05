@@ -39,9 +39,9 @@ struct LogicalRowLayout {
 pub struct CoordinateMap {
     pub logical_start: usize,
     pub logical_end: usize,
+    pub caret_end: usize,
     pub logical_to_visual: Vec<u16>,
     pub visual_to_logical: Vec<Option<usize>>,
-    pub visual_rtl: Vec<bool>,
 }
 
 impl CoordinateMap {
@@ -691,20 +691,12 @@ fn coordinate_map(tokens: &[Token], pane: PaneSpan, offset: usize) -> Option<Coo
         .map(|token| token.logical_col + token_width(token))
         .max()?;
     let mut positions = BTreeMap::new();
-    let mut visual_rtl = vec![false; usize::from(pane.end_col) + 1];
     let mut visual_col = usize::from(pane.start_col) + offset;
     for token in tokens {
         positions.insert(
             token.logical_col,
             (visual_col, token_width(token), token.rtl),
         );
-        if token.rtl {
-            for col in visual_col..visual_col + token_width(token) {
-                if let Some(slot) = visual_rtl.get_mut(col) {
-                    *slot = true;
-                }
-            }
-        }
         visual_col += token_width(token);
     }
 
@@ -731,10 +723,34 @@ fn coordinate_map(tokens: &[Token], pane: PaneSpan, offset: usize) -> Option<Coo
     Some(CoordinateMap {
         logical_start,
         logical_end,
+        caret_end: caret_end(tokens, logical_end),
         logical_to_visual,
         visual_to_logical,
-        visual_rtl,
     })
+}
+
+// Where the caret belongs once the text ends, which is not where the glyphs
+// end: an input box carries one pad cell past what was typed, and a trailing
+// space paints nothing, so counting glyphs loses the space that was just typed.
+// A row Claude positioned rather than a prompt it typed into carries no such
+// pad, and its whole blank tail is padding.
+fn caret_end(tokens: &[Token], logical_end: usize) -> usize {
+    let prompt = tokens
+        .iter()
+        .any(|token| PROMPTS.contains(&token.cell.text.as_str()));
+    let mut logical = tokens.iter().collect::<Vec<_>>();
+    logical.sort_by_key(|token| token.logical_col);
+    let mut end = logical_end;
+    for token in logical.iter().rev() {
+        if !token.cell.text.trim().is_empty() {
+            break;
+        }
+        end -= token_width(token);
+        if prompt {
+            break;
+        }
+    }
+    end
 }
 
 fn display_width(tokens: &[Token]) -> usize {

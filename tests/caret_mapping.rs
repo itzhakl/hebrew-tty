@@ -236,7 +236,7 @@ fn renderer_repaints_only_changed_rows_and_restores_mapped_caret() {
 }
 
 #[test]
-fn a_comma_does_not_end_the_run_the_caret_belongs_to() {
+fn the_caret_stands_against_the_character_last_typed() {
     #[derive(serde::Deserialize)]
     struct Sample {
         typed: String,
@@ -250,14 +250,7 @@ fn a_comma_does_not_end_the_run_the_caret_belongs_to() {
     );
     let samples: Vec<Sample> =
         serde_json::from_str(&std::fs::read_to_string(fixture).unwrap()).unwrap();
-    let mut checked = 0;
     for sample in &samples {
-        // A trailing space paints no cell, so Claude's caret is past the last
-        // glyph and the row is left alone; Latin belongs to the mixed-run case.
-        if sample.typed.ends_with(' ') || sample.typed.chars().any(|ch| ch.is_ascii_alphanumeric())
-        {
-            continue;
-        }
         let mut model = TerminalModel::new(2, 100).unwrap();
         model.feed(format!("\x1b[H{}\x1b[1;{}H", sample.row, sample.caret + 1).as_bytes());
         let snapshot = model.snapshot();
@@ -265,33 +258,51 @@ fn a_comma_does_not_end_the_run_the_caret_belongs_to() {
 
         let path = verified_path(Order::Visual);
         let result = layout_row(&snapshot.physical_rows[0], pane(100), &path, Mode::Auto);
-        let mut glyphs = result
-            .cells
-            .iter()
-            .enumerate()
-            .filter(|(_, cell)| !cell.text.trim().is_empty())
-            .map(|(index, cell)| (index as u16, cell.text.as_str()));
-        let (leading, text) = glyphs.next().unwrap();
-        let text_start = if text == "❯" {
-            glyphs.next().unwrap().0
-        } else {
-            leading
+        let mut renderer = Renderer::new(Vec::new());
+        let got = renderer
+            .repaint(&snapshot, &path, Mode::Auto)
+            .unwrap()
+            .cursor
+            .col;
+        let cell = |col: u16| {
+            result
+                .cells
+                .get(usize::from(col))
+                .map(|cell| cell.text.as_str())
+                .unwrap_or_default()
         };
 
-        let mut renderer = Renderer::new(Vec::new());
-        let repainted = renderer.repaint(&snapshot, &path, Mode::Auto).unwrap();
+        // A trailing space paints nothing and still owes the caret a column, so
+        // the character it stands against sits that many columns to its right.
+        let stripped = sample.typed.trim_end_matches(' ');
+        let blanks = (sample.typed.len() - stripped.len()) as u16;
+        for step in 0..blanks {
+            assert!(
+                cell(got + step).trim().is_empty(),
+                "typed {:?}: column {} carries {:?}, not the space typed",
+                sample.typed,
+                got + step,
+                cell(got + step)
+            );
+        }
+        let last = stripped.chars().next_back().unwrap();
+        // Forward is right for a Latin character and left for the rest, which
+        // bidi laid out right to left: the caret takes the cell itself there.
+        let (against, expected) = if last.is_ascii_alphanumeric() {
+            (got + blanks - 1, last)
+        } else {
+            (got + blanks, last)
+        };
         assert_eq!(
-            repainted.cursor.col, text_start,
-            "typed {:?} painted {:?}: the whole line is one RTL run, so the caret \
-             belongs on its leading cell",
-            sample.typed, sample.row
+            cell(against),
+            expected.to_string(),
+            "typed {:?} painted {:?}: the caret landed on {}",
+            sample.typed,
+            sample.row,
+            got
         );
-        checked += 1;
     }
-    assert!(
-        checked > 30,
-        "only {checked} samples carried a painted caret"
-    );
+    assert_eq!(samples.len(), 84);
 }
 
 fn verified_path(order: Order) -> ExecutionPath {

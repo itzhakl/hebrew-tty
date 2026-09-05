@@ -234,50 +234,13 @@ fn recovered_visual_cursor(
     if original.col != painted_end {
         return original;
     }
-    let Some(laid_out_end) = last_glyph_col(laid_out, pane) else {
+    if last_glyph_col(laid_out, pane).is_none() {
+        return original;
+    }
+    let Some(col) = map.visual_col(map.caret_end) else {
         return original;
     };
-    let width = rtl_run_width(laid_out, map, pane, laid_out_end);
-    // The run's own leading cell, not the blank before it: a bar caret drawn on
-    // the cell's left edge then touches the text instead of standing a column off.
-    if width == 0 || laid_out_end + 1 < pane.start_col + width {
-        return original;
-    }
-    CursorSnapshot {
-        col: laid_out_end + 1 - width,
-        ..original
-    }
-}
-
-// The run is the one bidi resolved, not the cells that carry a Hebrew letter:
-// rule N1 keeps a comma or a full stop between two RTL runs inside the run,
-// where a character class breaks the run there and strands the caret.
-// Blanks still only count with a glyph further left, so the indent ahead of a
-// line and the space before the prompt marker stay outside the run.
-fn rtl_run_width(
-    row: &PhysicalRowSnapshot,
-    map: &CoordinateMap,
-    pane: PaneSpan,
-    end_col: u16,
-) -> u16 {
-    let start = usize::from(pane.start_col);
-    let mut width = 0;
-    let mut pending_blanks = 0;
-    for col in (start..=usize::from(end_col)).rev() {
-        if !map.visual_rtl.get(col).copied().unwrap_or(false) {
-            break;
-        }
-        let Some(cell) = row.cells.get(col) else {
-            break;
-        };
-        if cell.text.trim().is_empty() {
-            pending_blanks += 1;
-            continue;
-        }
-        width += pending_blanks + 1;
-        pending_blanks = 0;
-    }
-    width
+    CursorSnapshot { col, ..original }
 }
 
 fn last_glyph_col(row: &PhysicalRowSnapshot, pane: PaneSpan) -> Option<u16> {
