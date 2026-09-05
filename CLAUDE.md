@@ -25,6 +25,22 @@ working" and names no cause. The recorded order carries forward to later
 versions, and the observed order and wrapping still override it the moment a
 real row contradicts the recording.
 
+The proxy no longer has to be the launcher. `--install` puts a block first in
+the shell's rc file that execs every interactive shell into it, so the shell is
+the child and the agent is whatever the inner pty brings to the foreground.
+`tcgetpgrp` on the master names that group, `/proc` names its exe and argv, and
+a launcher's interpreter offers its script as a second name - `node codex.js`
+is `codex`. The verdict is asked on a thread and lands tagged by generation:
+`claude --version` answers in 30ms, a pnpm launcher can take seconds, and
+neither may stall the relay. The rows the new program painted before its
+verdict landed are repaired then; a verdict for a program that has painted no
+RTL yet repaints nothing, which is what `mark_generation` is for. Once it
+paints RTL, every RTL row on screen is held to its path, the shell's leftovers
+included, exactly as a direct launch does. The child carries `HEBREW_TTY=1`, which
+is what keeps the inner shell from wrapping itself again, and a proxy that
+cannot start execs the plain shell, because the rc block already exec'd the
+shell away and an exit there closes the terminal.
+
 Puts Hebrew back the way it was typed in terminal coding agents. The Linux
 Rust proxy owns the child PTY, VT screen model, verified execution-path
 classification, per-row Unicode BiDi layout, pane alignment, repainting, and
@@ -38,6 +54,8 @@ retained JavaScript regression suite.
 | -------------------- | ------------------------------------------------------------- |
 | `bin/hebrew-tty`     | compatibility launcher for a built or packaged Rust binary     |
 | `src/platform/linux.rs` | Linux PTY transport, signals, resize, and stream integration |
+| `src/platform/foreground.rs` | what the inner pty is running: group, exe, argv, and the names to try |
+| `src/install.rs`     | `--install`: the rc block that execs interactive shells into the proxy |
 | `src/terminal.rs`    | VT screen cells, styles, cursor, panes, dirty rows, and reflow  |
 | `src/classify.rs`    | fail-safe measured execution-path classification                |
 | `src/layout.rs`      | logical recovery, per-row BiDi, mirroring, alignment, caret map |
@@ -57,6 +75,8 @@ cargo test --all-targets        # Rust proxy suites
 npm test                        # predecessor layout regressions
 cargo build --release
 bin/hebrew-tty claude           # direct proxy launch
+bin/hebrew-tty                  # wrap $SHELL; agents are classified as they come up
+bin/hebrew-tty --install        # do that from the rc file of every interactive shell
 HEBREW_TTY_TRACE=/tmp/t.trace bin/hebrew-tty claude   # record both sides
 hebrew-tty-replay /tmp/t.trace 68 132                 # replay one; REPLAY_RERUN=1 re-runs the relay
 bin/hebrew-tty pi

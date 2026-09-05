@@ -6,7 +6,7 @@
 
 use std::io::{self, Write};
 
-use crate::classify::ExecutionPath;
+use crate::classify::{select_mode, ExecutionPath, RowDisposition};
 use crate::config::Mode;
 use crate::layout::is_rtl_char;
 use crate::render::Renderer;
@@ -31,6 +31,7 @@ pub struct Transform<W: RelayWriter> {
     boundary: StreamBoundary,
     pending_rows: Vec<u16>,
     pending_cursor: bool,
+    touched: Vec<bool>,
 }
 
 impl<W: RelayWriter> Transform<W> {
@@ -52,6 +53,7 @@ impl<W: RelayWriter> Transform<W> {
             boundary: StreamBoundary::default(),
             pending_rows: Vec::new(),
             pending_cursor: false,
+            touched: vec![false; usize::from(rows)],
         })
     }
 
@@ -63,9 +65,63 @@ impl<W: RelayWriter> Transform<W> {
         &self.model
     }
 
+    pub fn path(&self) -> &ExecutionPath {
+        &self.path
+    }
+
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    fn passes_through(&self) -> bool {
+        select_mode(self.mode, &self.path).disposition == RowDisposition::PassThrough
+    }
+
+    /// Forget which rows the current program painted. Called when another
+    /// program takes the pty, before its first byte, so a verdict that lands
+    /// later has nothing to repair until that program paints RTL itself. Once
+    /// it does, every RTL row on screen is held to the path, the way a direct
+    /// launch holds them.
+    pub fn mark_generation(&mut self) {
+        self.touched.iter_mut().for_each(|row| *row = false);
+    }
+
+    /// Hold the rows against another path. Rows the current program painted
+    /// that carry RTL are repaired under it right away when the stream is at
+    /// ground, and queued for the next feed otherwise.
+    pub fn set_path(&mut self, path: ExecutionPath, mode: Mode) -> io::Result<()> {
+        let same_verdict = self.mode == mode
+            && self.path.order == path.order
+            && self.path.wrapping == path.wrapping
+            && self.path.confidence == path.confidence;
+        self.path = path;
+        self.mode = mode;
+        if same_verdict || self.passes_through() {
+            return Ok(());
+        }
+        let snapshot = self.model.snapshot();
+        let rows = rtl_rows(&snapshot)
+            .filter(|row| self.touched.get(usize::from(*row)).copied().unwrap_or(false))
+            .collect::<Vec<_>>();
+        if rows.is_empty() {
+            return Ok(());
+        }
+        if !self.boundary.is_ground() {
+            self.pending_rows.extend(rows);
+            self.pending_rows.sort_unstable();
+            self.pending_rows.dedup();
+            return Ok(());
+        }
+        self.renderer
+            .repaint_dirty(&snapshot, &self.path, self.mode, &rows)?;
+        self.corrected = true;
+        self.renderer.writer_mut().flush()
+    }
+
     pub fn feed(&mut self, bytes: &[u8]) -> io::Result<()> {
         let before = self.model.cursor();
-        if self.corrected && self.boundary.is_ground() {
+        let restored = self.corrected && self.boundary.is_ground();
+        if restored {
             write!(
                 self.renderer.writer_mut(),
                 "\x1b[{};{}H",
@@ -83,6 +139,19 @@ impl<W: RelayWriter> Transform<W> {
             .into_iter()
             .map(|row| row.row_index)
             .collect::<Vec<_>>();
+        for row in &dirty {
+            if let Some(touched) = self.touched.get_mut(usize::from(*row)) {
+                *touched = true;
+            }
+        }
+        if self.passes_through() {
+            self.pending_rows.clear();
+            self.pending_cursor = false;
+            if restored {
+                self.corrected = false;
+            }
+            return self.renderer.writer_mut().flush();
+        }
         self.pending_rows.extend(dirty);
         let snapshot = self.model.snapshot();
         self.pending_cursor |= before != snapshot.cursor;
@@ -131,6 +200,18 @@ impl<W: RelayWriter> Transform<W> {
             .into_iter()
             .map(|row| row.row_index)
             .collect::<Vec<_>>();
+        self.touched = vec![false; usize::from(rows)];
+        for row in &invalidated {
+            if let Some(touched) = self.touched.get_mut(usize::from(*row)) {
+                *touched = true;
+            }
+        }
+        self.pending_rows.clear();
+        self.pending_cursor = false;
+        if self.passes_through() {
+            self.corrected = false;
+            return Ok(());
+        }
         let snapshot = self.model.snapshot();
         if screen_has_rtl(&snapshot) {
             self.renderer
@@ -139,8 +220,6 @@ impl<W: RelayWriter> Transform<W> {
         } else {
             self.corrected = false;
         }
-        self.pending_rows.clear();
-        self.pending_cursor = false;
         Ok(())
     }
 }

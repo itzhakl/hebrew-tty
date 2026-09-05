@@ -1,9 +1,12 @@
 #![forbid(unsafe_code)]
 
 mod cli;
+mod install;
 mod platform;
 
+use std::collections::HashMap;
 use std::error::Error;
+use std::ffi::{OsStr, OsString};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read};
 use std::os::fd::AsRawFd;
@@ -11,18 +14,24 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Command as ProcessCommand, Stdio};
+use std::sync::{Arc, Mutex};
 
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use hebrew_tty::classify::{select_mode, Classifier, Host, ObservedEvidence};
-use hebrew_tty::config::Config;
+use hebrew_tty::classify::{
+    is_recorded_agent, select_mode, Classifier, ExecutionPath, Host, ObservedEvidence,
+};
+use hebrew_tty::config::{Config, Mode};
 use hebrew_tty::diagnostics::{DiagnosticRecord, Diagnostics};
+
+use platform::foreground::Foreground;
+use platform::{Classified, ForegroundClassifier, Launch};
 
 fn detect_agent_version(program: &std::ffi::OsStr, agent_name: &std::ffi::OsStr) -> Option<String> {
     let name = Path::new(agent_name).file_name()?.to_str()?;
-    if !matches!(name, "claude" | "pi" | "codex") {
+    if !is_recorded_agent(name) {
         return None;
     }
     let mut command = ProcessCommand::new(program);
@@ -139,44 +148,177 @@ fn open_diagnostics(path: &std::ffi::OsStr) -> io::Result<File> {
     Ok(file)
 }
 
+/// Classifies whatever the inner pty brings to the foreground, the way the
+/// launch command is classified, with each `--version` asked once per program.
+struct AgentClassifier {
+    config: Config,
+    host: Host,
+    cli_mode: Option<Mode>,
+    diagnostics: Option<Mutex<Diagnostics<File>>>,
+    reported: Mutex<Option<String>>,
+    versions: Mutex<HashMap<(String, OsString), Option<String>>>,
+}
+
+impl AgentClassifier {
+    /// One record per change of verdict. The first thing the pty brings to
+    /// the foreground is the launch command itself, already reported.
+    fn report(&self, name: &str, path: &ExecutionPath, mode: Mode) -> io::Result<()> {
+        let Some(diagnostics) = &self.diagnostics else {
+            return Ok(());
+        };
+        let selection = select_mode(mode, path);
+        let key = format!(
+            "{name}\0{:?}\0{:?}\0{mode}",
+            path.confidence, selection.disposition
+        );
+        let Ok(mut reported) = self.reported.lock() else {
+            return Ok(());
+        };
+        if reported.as_deref() == Some(key.as_str()) {
+            return Ok(());
+        }
+        *reported = Some(key);
+        let record = DiagnosticRecord::new(name, Some(self.host), mode, path, &selection);
+        match diagnostics.lock() {
+            Ok(mut diagnostics) => diagnostics.emit(&record),
+            Err(_) => Ok(()),
+        }
+    }
+
+    fn version(&self, name: &str, program: &OsStr) -> Option<String> {
+        if !is_recorded_agent(name) {
+            return None;
+        }
+        let key = (name.to_owned(), program.to_owned());
+        if let Some(cached) = self
+            .versions
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&key).cloned())
+        {
+            return cached;
+        }
+        let version = detect_agent_version(program, OsStr::new(name));
+        if let Ok(mut cache) = self.versions.lock() {
+            cache.insert(key, version.clone());
+        }
+        version
+    }
+
+    fn verdict(&self, name: &str, program: &OsStr) -> Classified {
+        let path = Classifier.observe(
+            OsStr::new(name),
+            Some(self.host),
+            ObservedEvidence {
+                agent_version: self.version(name, program),
+                ..ObservedEvidence::default()
+            },
+        );
+        let mode = self.config.policy_for(OsStr::new(name), self.cli_mode).mode;
+        let _ = self.report(name, &path, mode);
+        Classified {
+            name: name.to_owned(),
+            path,
+            mode,
+        }
+    }
+}
+
+impl ForegroundClassifier for AgentClassifier {
+    fn classify(&self, foreground: &Foreground) -> Classified {
+        let candidates = foreground.candidates();
+        match candidates
+            .iter()
+            .find(|candidate| is_recorded_agent(&candidate.name))
+        {
+            Some(candidate) => self.verdict(&candidate.name, &candidate.program),
+            None => self.verdict(&foreground.display_name(), OsStr::new("")),
+        }
+    }
+}
+
+fn default_shell() -> cli::Command {
+    let program = std::env::var_os("SHELL")
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| OsString::from("/bin/sh"));
+    cli::Command {
+        program,
+        args: Vec::new(),
+        argv0: None,
+    }
+}
+
 fn run(invocation: cli::Invocation) -> Result<i32, Box<dyn Error>> {
     let config = Config::load()?;
-    let policy = config.policy_for(&invocation.command.program, invocation.mode);
     let host = match std::env::var("HEBREW_TTY_HOST").as_deref() {
         Ok("herdr") => Host::Herdr,
         _ => Host::Direct,
     };
-    let agent_name = invocation
-        .command
+    let command = invocation.command.unwrap_or_else(default_shell);
+    let follow_name = command.argv0.is_none();
+    let policy = config.policy_for(&command.program, invocation.mode);
+    let diagnostics = match invocation.diagnostics {
+        Some(path) => Some(Mutex::new(Diagnostics::new(open_diagnostics(&path)?))),
+        None => None,
+    };
+    let classifier = Arc::new(AgentClassifier {
+        config,
+        host,
+        cli_mode: invocation.mode,
+        diagnostics,
+        reported: Mutex::new(None),
+        versions: Mutex::new(HashMap::new()),
+    });
+    let agent_name = command
         .argv0
         .clone()
-        .unwrap_or_else(|| invocation.command.program.clone());
+        .unwrap_or_else(|| command.program.clone());
+    let name = Path::new(&agent_name)
+        .file_name()
+        .unwrap_or(&agent_name)
+        .to_string_lossy()
+        .into_owned();
     let path = Classifier.observe(
         &agent_name,
         Some(host),
         ObservedEvidence {
-            agent_version: detect_agent_version(&invocation.command.program, &agent_name),
+            agent_version: classifier.version(&name, &command.program),
             ..ObservedEvidence::default()
         },
     );
-    let selection = select_mode(policy.mode, &path);
+    classifier.report(&name, &path, policy.mode)?;
 
-    if let Some(diagnostics_path) = invocation.diagnostics {
-        let command = Path::new(&agent_name)
-            .file_name()
-            .unwrap_or(&agent_name)
-            .to_string_lossy();
-        let file = open_diagnostics(&diagnostics_path)?;
-        Diagnostics::new(file).emit(&DiagnosticRecord::new(
-            &command,
-            Some(host),
-            policy.mode,
-            &path,
-            &selection,
-        ))?;
+    platform::run(Launch {
+        command,
+        path,
+        mode: policy.mode,
+        classifier,
+        follow_name,
+    })
+}
+
+fn finish(result: Result<String, Box<dyn Error>>) {
+    match result {
+        Ok(message) => println!("{message}"),
+        Err(error) => {
+            eprintln!("hebrew-tty: {error}");
+            std::process::exit(1);
+        }
     }
+}
 
-    platform::run(invocation.command, path, policy.mode)
+/// Under `--install` the shell exec'd into the proxy, so a proxy that cannot
+/// run has to become the shell itself or the terminal closes on the error.
+fn continue_in_plain_shell() {
+    let shell = default_shell();
+    eprintln!(
+        "hebrew-tty: continuing in {} without repair",
+        shell.program.to_string_lossy()
+    );
+    let error = ProcessCommand::new(&shell.program)
+        .env("HEBREW_TTY", "1")
+        .exec();
+    eprintln!("hebrew-tty: {error}");
 }
 
 fn main() {
@@ -184,13 +326,21 @@ fn main() {
         Ok(cli::Action::Help) => {
             print!("{}", cli::HELP);
         }
-        Ok(cli::Action::Run(invocation)) => match run(invocation) {
-            Ok(code) => std::process::exit(code),
-            Err(error) => {
-                eprintln!("hebrew-tty: {error}");
-                std::process::exit(1);
+        Ok(cli::Action::Install) => finish(install::install()),
+        Ok(cli::Action::Uninstall) => finish(install::uninstall()),
+        Ok(cli::Action::Run(invocation)) => {
+            let wraps_shell = invocation.command.is_none();
+            match run(invocation) {
+                Ok(code) => std::process::exit(code),
+                Err(error) => {
+                    eprintln!("hebrew-tty: {error}");
+                    if wraps_shell {
+                        continue_in_plain_shell();
+                    }
+                    std::process::exit(1);
+                }
             }
-        },
+        }
         Err(error) => {
             eprintln!("hebrew-tty: {error}\n{}", cli::USAGE);
             std::process::exit(2);

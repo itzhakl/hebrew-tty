@@ -1,12 +1,14 @@
 #![forbid(unsafe_code)]
 
 use std::error::Error;
+use std::sync::Arc;
 
 use hebrew_tty::classify::ExecutionPath;
 use hebrew_tty::config::Mode;
 
 use crate::cli::Command;
 
+pub mod foreground;
 #[cfg(target_os = "linux")]
 mod linux;
 
@@ -16,9 +18,31 @@ pub struct WindowSize {
     pub cols: u16,
 }
 
+/// The verdict on what the inner pty is running: the name to carry, the
+/// execution path, and the mode the policy picked for it.
+pub struct Classified {
+    pub name: String,
+    pub path: ExecutionPath,
+    pub mode: Mode,
+}
+
+pub trait ForegroundClassifier: Send + Sync {
+    fn classify(&self, foreground: &foreground::Foreground) -> Classified;
+}
+
+pub struct Launch {
+    pub command: Command,
+    pub path: ExecutionPath,
+    pub mode: Mode,
+    pub classifier: Arc<dyn ForegroundClassifier>,
+    /// Rename the proxy after whatever comes to the foreground. Off once
+    /// `--as` pinned a name.
+    pub follow_name: bool,
+}
+
 #[cfg(target_os = "linux")]
-pub fn run(command: Command, path: ExecutionPath, mode: Mode) -> Result<i32, Box<dyn Error>> {
-    linux::run(command, path, mode)
+pub fn run(launch: Launch) -> Result<i32, Box<dyn Error>> {
+    linux::run(launch)
 }
 
 #[cfg(not(target_os = "linux"))]

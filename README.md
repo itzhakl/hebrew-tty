@@ -19,6 +19,28 @@ The first release targets Linux and Ptyxis/VTE. macOS, Windows, mouse coordinate
 remapping, selection reconstruction, and clipboard reconstruction are not yet
 supported.
 
+## Always on
+
+`hebrew-tty --install` puts a guarded block first in `~/.zshrc` or `~/.bashrc`.
+Every interactive shell then execs into the proxy before it finishes starting,
+so nothing has to be launched through `hebrew-tty`, and the integrated terminal
+of an IDE gets the same repair as a terminal window. The proxy classifies
+whatever the shell brings to the foreground: an agent it has a recording for is
+repaired from the moment its version answers, including the rows it painted
+while being asked, and everything else passes through byte for byte.
+`hebrew-tty --uninstall` removes the block.
+
+```sh
+hebrew-tty --install      # once
+hebrew-tty                # the same for one shell, without the rc block
+```
+
+The child runs with `HEBREW_TTY=1`, which is what stops the inner shell from
+wrapping itself again and what a script can test for. A proxy that cannot start
+execs the plain shell instead of closing the terminal. The process name follows
+the foreground, `claude` while Claude Code runs and `zsh` after, unless `--as`
+pinned it.
+
 ## Safe modes
 
 The default mode is `auto`. It transforms only an agent version and host path

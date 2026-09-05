@@ -40,27 +40,29 @@ fn python_probe(script: &str, args: &[&str]) -> Output {
     command.output().unwrap()
 }
 
+const USAGE: &str = "usage: hebrew-tty [--mode MODE] [--diagnostics PATH] [--as NAME] [<command> [args...]]\n       hebrew-tty --install | --uninstall\n";
+
 #[test]
 fn help_and_errors_have_stable_statuses() {
     let help = run(&["--help"]);
     assert!(help.status.success());
     assert_eq!(
         String::from_utf8(help.stdout).unwrap(),
-        "usage: hebrew-tty [--mode MODE] [--diagnostics PATH] [--as NAME] <command> [args...]\n\n  --mode MODE         auto, logical, visual, or passthrough\n  --diagnostics PATH  append structured JSON diagnostics\n  --as NAME           run the command under that process name; herdr finds an\n                      agent pane by it, and a versioned build name is unknown\n"
+        format!("{USAGE}\n  <command>           what to run under the proxy; without one, $SHELL, and\n                      whatever it brings to the foreground is classified then\n  --mode MODE         auto, logical, visual, or passthrough\n  --diagnostics PATH  append structured JSON diagnostics\n  --as NAME           run the command under that process name; herdr finds an\n                      agent pane by it, and a versioned build name is unknown\n  --install           start every interactive shell under the proxy\n  --uninstall         undo --install\n")
     );
 
-    let missing = run(&[]);
+    let missing = run(&["--"]);
     assert_eq!(missing.status.code(), Some(2));
     assert_eq!(
         String::from_utf8(missing.stderr).unwrap(),
-        "hebrew-tty: missing command\nusage: hebrew-tty [--mode MODE] [--diagnostics PATH] [--as NAME] <command> [args...]\n"
+        format!("hebrew-tty: missing command after --\n{USAGE}")
     );
 
     let missing_name = run(&["--as"]);
     assert_eq!(missing_name.status.code(), Some(2));
     assert_eq!(
         String::from_utf8(missing_name.stderr).unwrap(),
-        "hebrew-tty: --as requires a name\nusage: hebrew-tty [--mode MODE] [--diagnostics PATH] [--as NAME] <command> [args...]\n"
+        format!("hebrew-tty: --as requires a name\n{USAGE}")
     );
 
     let invalid_mode = run(&["--mode", "guess", "true"]);
