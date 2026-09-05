@@ -2,7 +2,7 @@ use std::io::{self, Write};
 
 use crate::classify::{select_mode, ExecutionPath, RowDisposition};
 use crate::config::Mode;
-use crate::layout::{is_rtl_char, layout_rows, CoordinateMap, LayoutResult};
+use crate::layout::{layout_rows, CoordinateMap, LayoutResult};
 use crate::terminal::{
     CellWidth, Color, CursorSnapshot, PaneSpan, PhysicalRowSnapshot, ScreenSnapshot, StyleSnapshot,
     UnderlineStyle,
@@ -225,9 +225,9 @@ fn recovered_visual_cursor(
     map: Option<&CoordinateMap>,
     pane: PaneSpan,
 ) -> CursorSnapshot {
-    if map.is_none() {
+    let Some(map) = map else {
         return original;
-    }
+    };
     let Some(painted_end) = last_glyph_col(painted, pane) else {
         return original;
     };
@@ -237,7 +237,7 @@ fn recovered_visual_cursor(
     let Some(laid_out_end) = last_glyph_col(laid_out, pane) else {
         return original;
     };
-    let width = rtl_run_width(painted, pane, painted_end);
+    let width = rtl_run_width(laid_out, map, pane, laid_out_end);
     // The run's own leading cell, not the blank before it: a bar caret drawn on
     // the cell's left edge then touches the text instead of standing a column off.
     if width == 0 || laid_out_end + 1 < pane.start_col + width {
@@ -249,23 +249,30 @@ fn recovered_visual_cursor(
     }
 }
 
-// The run keeps the blanks inside it: a space between two Hebrew words belongs
-// to the run, a space before the prompt marker does not.
-fn rtl_run_width(row: &PhysicalRowSnapshot, pane: PaneSpan, end_col: u16) -> u16 {
+// The run is the one bidi resolved, not the cells that carry a Hebrew letter:
+// rule N1 keeps a comma or a full stop between two RTL runs inside the run,
+// where a character class breaks the run there and strands the caret.
+// Blanks still only count with a glyph further left, so the indent ahead of a
+// line and the space before the prompt marker stay outside the run.
+fn rtl_run_width(
+    row: &PhysicalRowSnapshot,
+    map: &CoordinateMap,
+    pane: PaneSpan,
+    end_col: u16,
+) -> u16 {
     let start = usize::from(pane.start_col);
     let mut width = 0;
     let mut pending_blanks = 0;
     for col in (start..=usize::from(end_col)).rev() {
+        if !map.visual_rtl.get(col).copied().unwrap_or(false) {
+            break;
+        }
         let Some(cell) = row.cells.get(col) else {
             break;
         };
-        let text = cell.text.trim();
-        if text.is_empty() {
+        if cell.text.trim().is_empty() {
             pending_blanks += 1;
             continue;
-        }
-        if !text.chars().any(is_rtl_char) {
-            break;
         }
         width += pending_blanks + 1;
         pending_blanks = 0;

@@ -41,6 +41,7 @@ pub struct CoordinateMap {
     pub logical_end: usize,
     pub logical_to_visual: Vec<u16>,
     pub visual_to_logical: Vec<Option<usize>>,
+    pub visual_rtl: Vec<bool>,
 }
 
 impl CoordinateMap {
@@ -690,12 +691,20 @@ fn coordinate_map(tokens: &[Token], pane: PaneSpan, offset: usize) -> Option<Coo
         .map(|token| token.logical_col + token_width(token))
         .max()?;
     let mut positions = BTreeMap::new();
+    let mut visual_rtl = vec![false; usize::from(pane.end_col) + 1];
     let mut visual_col = usize::from(pane.start_col) + offset;
     for token in tokens {
         positions.insert(
             token.logical_col,
             (visual_col, token_width(token), token.rtl),
         );
+        if token.rtl {
+            for col in visual_col..visual_col + token_width(token) {
+                if let Some(slot) = visual_rtl.get_mut(col) {
+                    *slot = true;
+                }
+            }
+        }
         visual_col += token_width(token);
     }
 
@@ -724,6 +733,7 @@ fn coordinate_map(tokens: &[Token], pane: PaneSpan, offset: usize) -> Option<Coo
         logical_end,
         logical_to_visual,
         visual_to_logical,
+        visual_rtl,
     })
 }
 
