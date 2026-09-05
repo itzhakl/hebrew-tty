@@ -13,6 +13,10 @@ what the renderer actually produced rather than hand-written guesses.
 | `probe3.py` | punctuation and spaces typed one character at a time          |
 | `probe4.py` | mixed Hebrew/English, recording the typed text alongside each frame |
 | `probe7.py` | a split screen, so one row carries two panes and the rule between them |
+| `probe8.py` | Hebrew carrying punctuation, recording the typed text alongside each frame |
+
+`probe8.py` writes `punctuation.json`; copy it to
+`test/fixtures/punctuation-samples.json`.
 
 `probe4.py` writes `mixed.json`; copy it to
 `test/fixtures/typing-samples.json` to refresh the ground-truth fixture.

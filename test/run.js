@@ -11,7 +11,10 @@ globalThis.__rtlBidi = require('bidi-js')();
 const M = require(path.join(__dirname, '..', 'src', 'caret.js'));
 
 const painted = require('./fixtures/painted-lines.json');
-const typing = require('./fixtures/typing-samples.json');
+const typing = [
+  ...require('./fixtures/typing-samples.json'),
+  ...require('./fixtures/punctuation-samples.json'),
+];
 const baseDir = require('./fixtures/base-direction.json');
 
 let failures = 0;

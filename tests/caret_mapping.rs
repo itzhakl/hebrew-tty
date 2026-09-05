@@ -235,6 +235,65 @@ fn renderer_repaints_only_changed_rows_and_restores_mapped_caret() {
     assert!(output.ends_with("\x1b[3;6H\x1b[?25h"));
 }
 
+#[test]
+fn a_comma_does_not_end_the_run_the_caret_belongs_to() {
+    #[derive(serde::Deserialize)]
+    struct Sample {
+        typed: String,
+        row: String,
+        caret: u16,
+    }
+
+    let fixture = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/test/fixtures/punctuation-samples.json"
+    );
+    let samples: Vec<Sample> =
+        serde_json::from_str(&std::fs::read_to_string(fixture).unwrap()).unwrap();
+    let mut checked = 0;
+    for sample in &samples {
+        // A trailing space paints no cell, so Claude's caret is past the last
+        // glyph and the row is left alone; Latin belongs to the mixed-run case.
+        if sample.typed.ends_with(' ') || sample.typed.chars().any(|ch| ch.is_ascii_alphanumeric())
+        {
+            continue;
+        }
+        let mut model = TerminalModel::new(2, 100).unwrap();
+        model.feed(format!("\x1b[H{}\x1b[1;{}H", sample.row, sample.caret + 1).as_bytes());
+        let snapshot = model.snapshot();
+        assert_eq!(snapshot.cursor.col, sample.caret, "{}", sample.typed);
+
+        let path = verified_path(Order::Visual);
+        let result = layout_row(&snapshot.physical_rows[0], pane(100), &path, Mode::Auto);
+        let mut glyphs = result
+            .cells
+            .iter()
+            .enumerate()
+            .filter(|(_, cell)| !cell.text.trim().is_empty())
+            .map(|(index, cell)| (index as u16, cell.text.as_str()));
+        let (leading, text) = glyphs.next().unwrap();
+        let text_start = if text == "❯" {
+            glyphs.next().unwrap().0
+        } else {
+            leading
+        };
+
+        let mut renderer = Renderer::new(Vec::new());
+        let repainted = renderer.repaint(&snapshot, &path, Mode::Auto).unwrap();
+        assert_eq!(
+            repainted.cursor.col, text_start,
+            "typed {:?} painted {:?}: the whole line is one RTL run, so the caret \
+             belongs on its leading cell",
+            sample.typed, sample.row
+        );
+        checked += 1;
+    }
+    assert!(
+        checked > 30,
+        "only {checked} samples carried a painted caret"
+    );
+}
+
 fn verified_path(order: Order) -> ExecutionPath {
     ExecutionPath {
         order: Some(order),
