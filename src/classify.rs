@@ -90,6 +90,11 @@ impl ExecutionPath {
     }
 }
 
+/// The names a measurement pair exists for. Anything else passes through.
+pub fn is_recorded_agent(name: &str) -> bool {
+    matches!(name, "claude" | "pi" | "codex")
+}
+
 fn product_marker(version: &str) -> String {
     version
         .chars()

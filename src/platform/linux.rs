@@ -1,18 +1,17 @@
 #![forbid(unsafe_code)]
 
 use std::error::Error;
-use std::ffi::{CString, OsStr, OsString};
-use std::io::{self, Write};
+use std::ffi::{CString, OsString};
+use std::io;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-use hebrew_tty::classify::{select_mode, ExecutionPath, RowDisposition};
-use hebrew_tty::config::Mode;
-use hebrew_tty::relay::Transform;
+use hebrew_tty::relay::{RelayWriter, Transform};
 use hebrew_tty::trace::TraceWriter;
 use nix::sys::signal::{killpg, Signal};
 use nix::unistd::Pid;
@@ -22,7 +21,8 @@ use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGWINCH};
 use signal_hook::flag;
 use signal_hook::iterator::Signals;
 
-use super::WindowSize;
+use super::foreground::{exe_of, Foreground};
+use super::{Classified, ForegroundClassifier, Launch, WindowSize};
 use crate::cli::Command;
 
 struct RawModeGuard(bool);
@@ -52,6 +52,16 @@ fn terminal_size() -> WindowSize {
         .unwrap_or(WindowSize { rows: 24, cols: 80 })
 }
 
+/// A pty nobody sized yet reports 0x0. The child is told the truth; the
+/// screen model needs cells to exist and gets the classic default.
+fn model_size(size: WindowSize) -> WindowSize {
+    if size.rows == 0 || size.cols == 0 {
+        WindowSize { rows: 24, cols: 80 }
+    } else {
+        size
+    }
+}
+
 fn pty_size(size: WindowSize) -> PtySize {
     PtySize {
         rows: size.rows,
@@ -78,6 +88,7 @@ fn command_builder(command: Command) -> CommandBuilder {
     if let Ok(dir) = std::env::current_dir() {
         builder.cwd(dir);
     }
+    builder.env("HEBREW_TTY", "1");
     builder
 }
 
@@ -126,60 +137,113 @@ fn read_output(mut reader: Box<dyn io::Read + Send>, sender: mpsc::SyncSender<Ou
     }
 }
 
-enum OutputRelay<'a> {
-    Passthrough(io::StdoutLock<'a>),
-    Transform(Box<Transform<TraceWriter<io::StdoutLock<'a>>>>),
-}
+const FOREGROUND_POLL: Duration = Duration::from_millis(200);
 
-impl<'a> OutputRelay<'a> {
-    fn new(
-        writer: io::StdoutLock<'a>,
-        size: WindowSize,
-        path: ExecutionPath,
-        mode: Mode,
-    ) -> Result<Self, Box<dyn Error>> {
-        if select_mode(mode, &path).disposition == RowDisposition::PassThrough {
-            return Ok(Self::Passthrough(writer));
-        }
-        Ok(Self::Transform(Box::new(Transform::new(
-            TraceWriter::new(writer),
-            size.rows,
-            size.cols,
-            path,
-            mode,
-        )?)))
-    }
-
-    fn feed(&mut self, bytes: &[u8]) -> io::Result<()> {
-        match self {
-            Self::Passthrough(writer) => {
-                writer.write_all(bytes)?;
-                writer.flush()
-            }
-            Self::Transform(transform) => transform.feed(bytes),
-        }
-    }
-
-    fn resize(&mut self, size: WindowSize) -> Result<(), Box<dyn Error>> {
-        if let Self::Transform(transform) = self {
-            transform.resize(size.rows, size.cols)?;
-        }
-        Ok(())
-    }
-}
-
-fn adopt_agent_process_name(argv0: Option<&OsStr>) {
-    let Some(name) = argv0.and_then(|value| value.to_str()) else {
-        return;
-    };
+fn adopt_process_name(name: &str) {
     let truncated: String = name.chars().take(15).collect();
     if let Ok(name) = CString::new(truncated) {
         let _ = nix::sys::prctl::set_name(&name);
     }
 }
 
-pub fn run(command: Command, path: ExecutionPath, mode: Mode) -> Result<i32, Box<dyn Error>> {
-    adopt_agent_process_name(command.argv0.as_deref());
+/// Watches which program holds the inner pty and hands each new one to the
+/// classifier on a thread, so a slow `--version` never stalls the relay. A
+/// verdict comes back tagged with the generation it answers; a stale one is
+/// dropped.
+struct Follower {
+    classifier: Arc<dyn ForegroundClassifier>,
+    follow_name: bool,
+    own_exe: Option<PathBuf>,
+    current: Option<(i32, PathBuf)>,
+    generation: u64,
+    last_poll: Option<Instant>,
+    verdict_tx: mpsc::Sender<(u64, Classified)>,
+    verdict_rx: mpsc::Receiver<(u64, Classified)>,
+}
+
+impl Follower {
+    fn new(classifier: Arc<dyn ForegroundClassifier>, follow_name: bool) -> Self {
+        let (verdict_tx, verdict_rx) = mpsc::channel();
+        Self {
+            classifier,
+            follow_name,
+            own_exe: std::env::current_exe().ok(),
+            current: None,
+            generation: 0,
+            last_poll: None,
+            verdict_tx,
+            verdict_rx,
+        }
+    }
+
+    fn poll<W: RelayWriter>(
+        &mut self,
+        master: &dyn MasterPty,
+        relay: &mut Transform<W>,
+        force: bool,
+    ) {
+        if !force
+            && self
+                .last_poll
+                .is_some_and(|last| last.elapsed() < FOREGROUND_POLL)
+        {
+            return;
+        }
+        self.last_poll = Some(Instant::now());
+        let Some(group) = master.process_group_leader() else {
+            return;
+        };
+        let Some(exe) = exe_of(group) else {
+            return;
+        };
+        // Before its exec the child is still this binary.
+        if self.own_exe.as_deref() == Some(exe.as_path()) {
+            return;
+        }
+        if self.current.as_ref().is_some_and(|(current_group, current_exe)| {
+            *current_group == group && *current_exe == exe
+        }) {
+            return;
+        }
+        let Some(foreground) = Foreground::read(group) else {
+            return;
+        };
+        self.current = Some((group, exe));
+        self.generation += 1;
+        relay.mark_generation();
+        let generation = self.generation;
+        let classifier = Arc::clone(&self.classifier);
+        let sender = self.verdict_tx.clone();
+        thread::spawn(move || {
+            let _ = sender.send((generation, classifier.classify(&foreground)));
+        });
+    }
+
+    fn apply<W: RelayWriter>(&mut self, relay: &mut Transform<W>) -> io::Result<()> {
+        while let Ok((generation, verdict)) = self.verdict_rx.try_recv() {
+            if generation != self.generation {
+                continue;
+            }
+            if self.follow_name {
+                adopt_process_name(&verdict.name);
+            }
+            relay.set_path(verdict.path, verdict.mode)?;
+        }
+        Ok(())
+    }
+}
+
+pub fn run(launch: Launch) -> Result<i32, Box<dyn Error>> {
+    let Launch {
+        command,
+        path,
+        mode,
+        classifier,
+        follow_name,
+    } = launch;
+    if let Some(name) = command.argv0.as_deref().and_then(|value| value.to_str()) {
+        adopt_process_name(name);
+    }
     let resize_pending = Arc::new(AtomicBool::new(false));
     flag::register(SIGWINCH, Arc::clone(&resize_pending))?;
     let mut forwarded = Signals::new([SIGHUP, SIGINT, SIGQUIT, SIGTERM])?;
@@ -205,7 +269,15 @@ pub fn run(command: Command, path: ExecutionPath, mode: Mode) -> Result<i32, Box
     let (output_tx, output_rx) = mpsc::sync_channel(8);
     thread::spawn(move || read_output(reader, output_tx));
     let stdout = io::stdout();
-    let mut relay = OutputRelay::new(stdout.lock(), initial_size, path, mode)?;
+    let screen = model_size(initial_size);
+    let mut relay = Transform::new(
+        TraceWriter::new(stdout.lock()),
+        screen.rows,
+        screen.cols,
+        path,
+        mode,
+    )?;
+    let mut follower = Follower::new(classifier, follow_name);
     let mut completed_writer = None;
     let mut output_result = None;
     let mut relay_failed_at = None;
@@ -217,9 +289,10 @@ pub fn run(command: Command, path: ExecutionPath, mode: Mode) -> Result<i32, Box
         while let Ok(event) = output_rx.try_recv() {
             match event {
                 OutputEvent::Data(bytes) => {
+                    follower.poll(pair.master.as_ref(), &mut relay, true);
                     if let Err(error) = relay.feed(&bytes) {
                         terminate_foreground(pair.master.as_ref(), child.as_mut(), Signal::SIGTERM);
-                        relay_failed_at.get_or_insert_with(std::time::Instant::now);
+                        relay_failed_at.get_or_insert_with(Instant::now);
                         output_result.get_or_insert(Err(error));
                     }
                 }
@@ -237,6 +310,12 @@ pub fn run(command: Command, path: ExecutionPath, mode: Mode) -> Result<i32, Box
                 }
             }
         }
+        follower.poll(pair.master.as_ref(), &mut relay, false);
+        if let Err(error) = follower.apply(&mut relay) {
+            terminate_foreground(pair.master.as_ref(), child.as_mut(), Signal::SIGTERM);
+            relay_failed_at.get_or_insert_with(Instant::now);
+            output_result.get_or_insert(Err(error));
+        }
         if let Some((_, status)) = waitpid(Some(child_pid), WaitOptions::NOHANG)? {
             if let Some(code) = child_exit_code(status) {
                 break code;
@@ -248,7 +327,8 @@ pub fn run(command: Command, path: ExecutionPath, mode: Mode) -> Result<i32, Box
         if resize_pending.swap(false, Ordering::Relaxed) {
             let size = terminal_size();
             pair.master.resize(pty_size(size))?;
-            relay.resize(size)?;
+            let screen = model_size(size);
+            relay.resize(screen.rows, screen.cols)?;
         }
         for number in forwarded.pending() {
             if let Some(group) = pair.master.process_group_leader().map(Pid::from_raw) {

@@ -5,9 +5,8 @@ use std::str::FromStr;
 
 use hebrew_tty::config::Mode;
 
-pub const USAGE: &str =
-    "usage: hebrew-tty [--mode MODE] [--diagnostics PATH] [--as NAME] <command> [args...]";
-pub const HELP: &str = "usage: hebrew-tty [--mode MODE] [--diagnostics PATH] [--as NAME] <command> [args...]\n\n  --mode MODE         auto, logical, visual, or passthrough\n  --diagnostics PATH  append structured JSON diagnostics\n  --as NAME           run the command under that process name; herdr finds an\n                      agent pane by it, and a versioned build name is unknown\n";
+pub const USAGE: &str = "usage: hebrew-tty [--mode MODE] [--diagnostics PATH] [--as NAME] [<command> [args...]]\n       hebrew-tty --install | --uninstall";
+pub const HELP: &str = "usage: hebrew-tty [--mode MODE] [--diagnostics PATH] [--as NAME] [<command> [args...]]\n       hebrew-tty --install | --uninstall\n\n  <command>           what to run under the proxy; without one, $SHELL, and\n                      whatever it brings to the foreground is classified then\n  --mode MODE         auto, logical, visual, or passthrough\n  --diagnostics PATH  append structured JSON diagnostics\n  --as NAME           run the command under that process name; herdr finds an\n                      agent pane by it, and a versioned build name is unknown\n  --install           start every interactive shell under the proxy\n  --uninstall         undo --install\n";
 
 pub struct Command {
     pub program: OsString,
@@ -16,13 +15,15 @@ pub struct Command {
 }
 
 pub struct Invocation {
-    pub command: Command,
+    pub command: Option<Command>,
     pub mode: Option<Mode>,
     pub diagnostics: Option<OsString>,
 }
 
 pub enum Action {
     Help,
+    Install,
+    Uninstall,
     Run(Invocation),
 }
 
@@ -33,9 +34,17 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, &'stati
     let mut diagnostics = None;
 
     let program = loop {
-        let argument = args.next().ok_or("missing command")?;
+        let Some(argument) = args.next() else {
+            break None;
+        };
         if argument == "--help" {
             return Ok(Action::Help);
+        }
+        if argument == "--install" {
+            return Ok(Action::Install);
+        }
+        if argument == "--uninstall" {
+            return Ok(Action::Uninstall);
         }
         if argument == "--as" {
             argv0 = Some(args.next().ok_or("--as requires a name")?);
@@ -46,18 +55,18 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, &'stati
         } else if argument == "--diagnostics" {
             diagnostics = Some(args.next().ok_or("--diagnostics requires a path")?);
         } else if argument == "--" {
-            break args.next().ok_or("missing command")?;
+            break Some(args.next().ok_or("missing command after --")?);
         } else {
-            break argument;
+            break Some(argument);
         }
     };
 
     Ok(Action::Run(Invocation {
-        command: Command {
+        command: program.map(|program| Command {
             program,
             args: args.collect(),
             argv0,
-        },
+        }),
         mode,
         diagnostics,
     }))
