@@ -22,7 +22,7 @@ use hebrew_tty::diagnostics::{DiagnosticRecord, Diagnostics};
 
 fn detect_agent_version(program: &std::ffi::OsStr, agent_name: &std::ffi::OsStr) -> Option<String> {
     let name = Path::new(agent_name).file_name()?.to_str()?;
-    if !matches!(name, "claude" | "pi" | "codex") {
+    if !matches!(name, "claude" | "pi" | "codex" | "agy") {
         return None;
     }
     let mut command = ProcessCommand::new(program);
@@ -39,7 +39,10 @@ fn detect_agent_version(program: &std::ffi::OsStr, agent_name: &std::ffi::OsStr)
     set_nonblocking(stderr.as_raw_fd())?;
     let mut stdout_bytes = Vec::new();
     let mut stderr_bytes = Vec::new();
-    let deadline = Instant::now() + Duration::from_secs(3);
+    // A node launcher answers `--version` in its own time: measured 4.75s for
+    // codex-cli 0.151.0 and 3.80s for pi 0.84.4, against 0.2s for claude. Three
+    // seconds classified both as unknown, which turns the whole filter off.
+    let deadline = Instant::now() + Duration::from_secs(10);
     let status = loop {
         if !drain_version_capture(&mut stdout, &mut stdout_bytes)
             || !drain_version_capture(&mut stderr, &mut stderr_bytes)

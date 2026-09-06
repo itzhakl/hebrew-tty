@@ -135,6 +135,7 @@ impl Classifier {
             "claude" => (Order::Visual, "2.1.251 (Claude Code)"),
             "pi" => (Order::Visual, "0.84.4"),
             "codex" => (Order::Logical, "codex-cli 0.151.0"),
+            "agy" => (Order::Logical, "1.1.27"),
             _ => {
                 return ExecutionPath::unknown(format!(
                     "no recorded path for {command}/{host_name}"

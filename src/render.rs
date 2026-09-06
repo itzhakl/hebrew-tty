@@ -218,6 +218,8 @@ fn mapped_cursor(
     original
 }
 
+const TRAILING_BLANKS: u16 = 4;
+
 fn recovered_visual_cursor(
     original: CursorSnapshot,
     painted: &PhysicalRowSnapshot,
@@ -228,16 +230,33 @@ fn recovered_visual_cursor(
     let Some(map) = map else {
         return original;
     };
-    let Some(painted_end) = last_glyph_col(painted, pane) else {
+    // Either end of the painted text says the caret is at the end of the line,
+    // because the two agents disagree about which end that is: Claude reports
+    // the logical column, so it lands on the rightmost cell of an RTL row, and
+    // Pi walks the caret one cell left per character, so it lands on the
+    // leftmost. Neither is the caret this row wants; the recovered end is.
+    let (Some(painted_start), Some(painted_end)) = (
+        glyph_cols(painted, pane).next(),
+        last_glyph_col(painted, pane),
+    ) else {
         return original;
     };
-    if original.col != painted_end {
+    // Pi stops short of its own text by a column for every trailing space,
+    // which paints nothing and so cannot be recovered from the row: that gap is
+    // the only place those spaces are recorded. Measured at 1 for one space.
+    // Further out than a few and the caret is not at the end of this line.
+    let gap = painted_start.saturating_sub(original.col);
+    if original.col != painted_end && (original.col > painted_start || gap > TRAILING_BLANKS) {
         return original;
     }
     if last_glyph_col(laid_out, pane).is_none() {
         return original;
     }
-    let Some(col) = map.visual_col(map.caret_end) else {
+    let Some(col) = map
+        .visual_col(map.caret_end)
+        .and_then(|col| col.checked_sub(gap))
+        .filter(|col| *col >= pane.start_col)
+    else {
         return original;
     };
     CursorSnapshot { col, ..original }
