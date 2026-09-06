@@ -14,9 +14,11 @@ what the renderer actually produced rather than hand-written guesses.
 | `probe4.py` | mixed Hebrew/English, recording the typed text alongside each frame |
 | `probe7.py` | a split screen, so one row carries two panes and the rule between them |
 | `probe8.py` | Hebrew carrying punctuation, recording the typed text alongside each frame |
+| `probe9.py` | the same against Pi, which paints its own visual order and its own caret |
 
 `probe8.py` writes `punctuation.json`; copy it to
-`test/fixtures/punctuation-samples.json`.
+`test/fixtures/punctuation-samples.json`. `probe9.py` writes `pi-typing.json`
+for `test/fixtures/pi-typing-samples.json`.
 
 `probe4.py` writes `mixed.json`; copy it to
 `test/fixtures/typing-samples.json` to refresh the ground-truth fixture.

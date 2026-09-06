@@ -24,6 +24,7 @@ fn measured_evidence(command: &str) -> ObservedEvidence {
         "claude" => "2.1.251 (Claude Code)",
         "pi" => "0.84.4",
         "codex" => "codex-cli 0.151.0",
+        "agy" => "1.1.27",
         _ => "unmeasured",
     };
     ObservedEvidence {
@@ -39,6 +40,7 @@ fn recorded_agent_and_host_paths_are_verified() {
         ("claude", Order::Visual),
         ("pi", Order::Visual),
         ("codex", Order::Logical),
+        ("agy", Order::Logical),
     ] {
         for host in [Host::Direct, Host::Herdr] {
             let path =

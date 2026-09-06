@@ -23,7 +23,7 @@ import uuid
 SCHEMA_VERSION = 2
 ROWS = 30
 WIDTHS = (48, 80)
-AGENTS = ("claude", "pi", "codex")
+AGENTS = ("claude", "pi", "codex", "agy")
 HOSTS = ("direct", "herdr")
 PROBE = "HTP_A אבגדה HTP_B 0123456789 abcDEF HTP_C וזחטי HTP_D"
 HEBREW_RUNS = ("אבגדה", "וזחטי")
